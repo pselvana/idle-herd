@@ -1,11 +1,12 @@
 # Native development, build and test paths
 
-Phases 1–3 retain Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
+Phases 1–4 retain Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
 and commands `herd` / `herd-node`, and adds `idle-herd` single-node ingress.
 Run `uv run idle-herd` with separately managed local Ollama on port 11434;
 ingress binds 127.0.0.1:11435. See [runtime/configuration/recovery](phase-1.md).
 Phase 2 adds opt-in authenticated peers; see [enrollment/operation](phase-2.md).
 Phase 3 adds [native sensor interfaces and worker-local idle policy](phase-3.md).
+Phase 4 adds [capacity views, bounded waiters and the Python helper](phase-4.md).
 Sensor tests mock native APIs and helpers; native process fixtures inject synthetic
 signals. They do not verify physical activity or hardware thermal/power behavior.
 There is no SwiftUI project, Go sidecar or native installer yet.

@@ -36,6 +36,7 @@ class LocalLedger:
         self.fit_check = fit_check
         self.policy = policy or IdlePolicy(settings, native_sensor(settings.sensor_helper))
         self._lock = asyncio.Lock()
+        self.changed = asyncio.Event()
         self._db: aiosqlite.Connection | None = None
         self._owner: aiosqlite.Connection | None = None
         self.worker_id = ""
@@ -115,19 +116,23 @@ class LocalLedger:
     @asynccontextmanager
     async def _transaction(self):
         async with self._lock:
+            self._lease_changed = False
             try:
                 await self._db.execute("BEGIN IMMEDIATE")
                 yield
                 await self._db.commit()
+                if self._lease_changed:
+                    self.changed.set()
             except BaseException:
                 await asyncio.shield(self._db.rollback())
                 raise
 
     async def _expire(self):
-        await self._db.execute(
+        cursor = await self._db.execute(
             "UPDATE leases SET state='expired' WHERE state='reserved' AND expires_at<=?",
             (time.time(),),
         )
+        self._lease_changed |= cursor.rowcount > 0
 
     async def adopt_cluster(self, cluster_id: str):
         """Offline enrollment only: never reassign an authority with lease history."""
@@ -162,6 +167,7 @@ class LocalLedger:
         return [Lease(**dict(row)) for row in rows]
 
     async def _event(self, lease: Lease, state: str):
+        self._lease_changed = True
         await self._db.execute(
             "UPDATE leases SET state=? WHERE reservation_id=?", (state, lease.reservation_id)
         )
@@ -360,7 +366,9 @@ class LocalLedger:
                 worker_id=self.worker_id,
                 worker_incarnation=self.incarnation,
                 model=model,
-                total_slots=self.settings.slots,
+                total_slots=min(
+                    self.settings.slots, self.settings.model_slots.get(model, self.settings.slots)
+                ),
                 observed_available_slots=available,
                 quarantined_slots=sum(item.state == "quarantined" for item in occupied),
                 eligible=reason is None,

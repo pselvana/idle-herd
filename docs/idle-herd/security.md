@@ -1,4 +1,4 @@
-# Security boundary: Phases 1–3 and target design
+# Security boundary: Phases 1–4 and target design
 
 The table below is the target threat model. Phase 1 `idle-herd` binds ingress to
 127.0.0.1, rejects non-loopback clients, unexpected Host and browser Origin/cross-site
@@ -8,7 +8,8 @@ appropriate per-user ACLs). Local inference and initial reservation issuance are
 available to local processes; **scoped caller authentication is not implemented**.
 It exposes no privileged owner controls or transfer endpoints. Phase 2 adds a
 separate TLS listener with signed, replay-fenced RPC, CA enrollment and eventual
-authority-signed revocation. It exposes only exchange/acquire/execute/release;
+authority-signed revocation. Phase 4 adds capacity and inspect RPC to
+exchange/acquire/execute/release; all require independent peer authentication;
 local-only routes remain inaccessible on that listener. See
 [Phase 2 security and operating limits](phase-2.md).
 Phase 3 enforces the worker's background policy on every peer reservation and
@@ -20,6 +21,13 @@ protect the executable and its parent directories against untrusted replacement.
 Unknown/stale activity cannot grant idle-only work. Read-only eligibility exposes
 aggregate observations, never input events or session identifiers. See
 [Phase 3 limitations](phase-3.md).
+Phase 4 signs authenticated negative admission replies as well as grants: only
+a verified decline permits the origin to try another worker. Unknown replies
+retain a durable target claim. `origin.sqlite` holds reservation capabilities;
+protect it like the worker ledger. Waiter count is bounded with
+`IDLE_HERD_MAX_WAITERS` (default 256); historical claims currently have no expiry.
+Peer capacity is advisory even after signature and freshness checks. See
+[Phase 4 limitations](phase-4.md).
 See [Phase 1](phase-1.md); Phase 6's authenticated owner API remains required.
 [The audit](upstream-audit.md) records inherited unauthenticated
 routes, wildcard binds and external telemetry. Do not expose that runtime as an

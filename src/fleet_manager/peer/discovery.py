@@ -148,6 +148,7 @@ class PeerDirectory:
         self.path = Path(data_dir).expanduser() / "known-peers.json"
         self._peers: dict[str, _Peer] = {}
         self._persist_lock = asyncio.Lock()
+        self.changed = asyncio.Event()
         self._owns_client = client is None
         self.client = client or httpx.AsyncClient(
             verify=identity.client_ssl_context(), timeout=5, follow_redirects=False, trust_env=False
@@ -249,6 +250,7 @@ class PeerDirectory:
         peer.last_seen = time.monotonic()
         peer.observed_at = time.time()
         peer.reason = ""
+        self.changed.set()
 
     async def exchange(self, authenticated_worker_id: str, payload: Exchange) -> Exchange:
         local = await self._local()
@@ -353,6 +355,7 @@ class PeerDirectory:
         if peer:
             peer.last_seen = None
             peer.reason = reason
+            self.changed.set()
 
     async def run(self) -> None:
         while True:

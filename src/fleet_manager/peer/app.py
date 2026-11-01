@@ -10,6 +10,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import aiosqlite
 import httpx
 import psutil
 from fastapi import FastAPI, Request
@@ -26,12 +27,14 @@ from fleet_manager.models.node import (
 )
 from fleet_manager.models.request import RequestFormat, normalize_model_name
 from fleet_manager.peer.backend import AdmissionTransport, OllamaBackend, RequestBinding, binding
+from fleet_manager.peer.capacity import ClusterCapacity, cluster_capacity
 from fleet_manager.peer.local_ledger import LocalLedger
-from fleet_manager.peer.models import AcquireRequest, AdmissionError, PeerSettings, Workload
+from fleet_manager.peer.models import AcquireRequest, AdmissionError, Lease, PeerSettings, Workload
 from fleet_manager.peer.network import OriginDispatch, PeerRPC, trace_failure
 from fleet_manager.peer.policy import IdlePolicy
 from fleet_manager.peer.sensors import Sensor, native_sensor
 from fleet_manager.peer.stores import PeerLatencyStore, PeerTraceStore
+from fleet_manager.peer.waiters import OriginWaiters
 from fleet_manager.server.queue_manager import QueueManager
 from fleet_manager.server.registry import NodeRegistry
 from fleet_manager.server.scorer import ScoringEngine
@@ -308,11 +311,17 @@ def create_peer_app(
                     app.state.peer_error = str(exc)
                     logger.error("Peer transport unavailable: %s", exc)
 
+            waiters = OriginWaiters(app)
+            await waiters.open()
+            stack.push_async_callback(waiters.close)
+            app.state.waiters = waiters
+
             async def inventory_loop():
                 while True:
                     await asyncio.sleep(2)
                     try:
                         await refresh_local(app)
+                        waiters.changed.set()
                     except Exception:
                         logger.exception("Local inventory refresh failed")
                         registry.handle_drain(ledger.worker_id)
@@ -373,7 +382,13 @@ def create_peer_app(
         )
         return JSONResponse(
             status_code=exc.status,
-            content={"error": {"type": exc.reason, "message": exc.reason}},
+            content={
+                "error": {
+                    "type": exc.reason,
+                    "message": exc.reason,
+                    **({"details": exc.details} if exc.details is not None else {}),
+                }
+            },
             headers={"Retry-After": "1"} if exc.status == 429 else {},
         )
 
@@ -384,33 +399,61 @@ def create_peer_app(
         status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else 502
         return JSONResponse(status_code=status, content={"error": str(exc)})
 
+    @app.exception_handler(aiosqlite.Error)
+    async def storage_error(request, exc):
+        # A failed origin/worker write cannot authorize admission or execution.
+        await trace_failure(app, "admission_storage_unavailable")
+        return JSONResponse(
+            status_code=503, content={"error": {"type": "admission_storage_unavailable"}}
+        )
+
     @app.get("/v1/cluster/capacity")
-    async def capacity(model: str, workload: Workload = "interactive", idle_only: bool = False):
-        return await app.state.ledger.capacity(normalize_model_name(model), workload, idle_only)
+    async def capacity(
+        model: str, workload: Workload = "interactive", idle_only: bool = False
+    ) -> ClusterCapacity:
+        return await cluster_capacity(app, model, workload, idle_only)
 
     @app.get("/v1/node/eligibility")
     async def eligibility(workload: Workload = "background", idle_only: bool = False):
         return await app.state.idle_policy.decision(workload, idle_only)
 
-    @app.post("/v1/capacity/acquire")
-    async def acquire(spec: AcquireRequest):
-        return await app.state.ledger.acquire(spec)
+    @app.post("/v1/capacity/acquire", status_code=201)
+    async def acquire(spec: AcquireRequest, request: Request) -> Lease:
+        # Read the body before watching ASGI disconnects, so the watcher never
+        # competes with request parsing. Cancel pending admission on disconnect.
+        async def disconnected():
+            while True:
+                message = await request.receive()
+                if message["type"] == "http.disconnect":
+                    return
+
+        pending = asyncio.create_task(app.state.waiters.acquire(spec))
+        gone = asyncio.create_task(disconnected())
+        try:
+            done, _ = await asyncio.wait({pending, gone}, return_when=asyncio.FIRST_COMPLETED)
+            if pending in done:
+                return await pending
+            raise asyncio.CancelledError()
+        finally:
+            for task in (pending, gone):
+                if not task.done():
+                    task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
     async def authorized_reservation(reservation_id: str, request: Request):
         token = request.headers.get("X-Idle-Herd-Reservation", "")
-        lease = await app.state.ledger.inspect(token)
-        if lease.reservation_id != reservation_id:
-            raise AdmissionError("invalid_reservation", 403)
-        return lease
+        return await app.state.waiters.reservation(reservation_id, token)
 
     @app.get("/v1/capacity/reservations/{reservation_id}")
-    async def inspect(reservation_id: str, request: Request):
+    async def inspect(reservation_id: str, request: Request) -> Lease:
         return await authorized_reservation(reservation_id, request)
 
     @app.delete("/v1/capacity/reservations/{reservation_id}")
-    async def release(reservation_id: str, request: Request):
-        lease = await authorized_reservation(reservation_id, request)
-        return await app.state.ledger.release(lease.token)
+    async def release(reservation_id: str, request: Request) -> Lease:
+        return await app.state.waiters.reservation(
+            reservation_id, request.headers.get("X-Idle-Herd-Reservation", ""), release=True
+        )
 
     @app.get("/health")
     async def health():

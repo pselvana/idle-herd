@@ -133,9 +133,15 @@ class PeerRPC:
                 if isinstance(exc, AdmissionError)
                 else (403 if isinstance(exc, IdentityError) else 422)
             )
-            await JSONResponse(status_code=status, content={"error": {"type": reason}})(
-                scope, receive, send
-            )
+            content = json.dumps({"error": {"type": reason}}).encode()
+            signed = {}
+            if scope.get("idle_herd_verified_nonce"):
+                signed = self.local.state.identity.sign_response(
+                    scope["idle_herd_verified_nonce"], status, content
+                )
+            await Response(
+                status_code=status, content=content, media_type="application/json", headers=signed
+            )(scope, receive, send)
 
     async def _handle(self, scope, receive, send):
         path = scope["path"]
@@ -147,6 +153,8 @@ class PeerRPC:
                 "/peer/v1/acquire",
                 "/peer/v1/execute",
                 "/peer/v1/release",
+                "/peer/v1/inspect",
+                "/peer/v1/capacity",
             }
             or scope.get("query_string")
         ):
@@ -166,12 +174,23 @@ class PeerRPC:
             principal, headers["x-idle-nonce"], int(headers["x-idle-time"])
         )
         nonce = headers["x-idle-nonce"]
+        scope["idle_herd_verified_nonce"] = nonce
         if path.endswith("exchange"):
             result = await self.local.state.directory.exchange(
                 principal, Exchange.model_validate_json(body)
             )
+        elif path.endswith("capacity"):
+            from fleet_manager.peer.capacity import CapacityQuery
+
+            query = CapacityQuery.model_validate_json(body)
+            result = await self.local.state.ledger.capacity(
+                normalize_model_name(query.model), "background", query.idle_only
+            )
         elif path.endswith("acquire"):
             spec = AcquireRequest.model_validate_json(body)
+            if spec.wait_ms != 0:
+                # Public waiting belongs to the origin, never a remote worker queue.
+                spec = spec.model_copy(update={"wait_ms": 0})
             spec = spec.model_copy(
                 update={
                     "request_id": peer_request_id(principal, spec.request_id),
@@ -186,6 +205,8 @@ class PeerRPC:
                 raise AdmissionError("reservation_principal_mismatch", 403)
             if path.endswith("release"):
                 result = await self.local.state.ledger.release(spec.token)
+            elif path.endswith("inspect"):
+                result = lease
             else:
                 # Local translators consume the worker-issued token through the
                 # very same fenced backend transport as localhost inference.
@@ -237,7 +258,7 @@ class OriginDispatch:
 
     No retry occurs after execution dispatch: a broken response has unknown outcome.
     Worker policy is authoritative for background and idle-only requests.
-    There are no blocking waits or durable jobs here.
+    Explicit public reservations are resolved through the origin's durable claims.
     """
 
     def __init__(self, app, local):
@@ -247,12 +268,20 @@ class OriginDispatch:
         directory = getattr(self.local.state, "directory", None)
         if (
             scope["type"] != "http"
-            or directory is None
             or scope.get("idle_herd_remote")
             or scope["method"] != "POST"
             or scope["path"] not in INFERENCE_PATHS
-            or any(k.lower() == b"x-idle-herd-reservation" for k, v in scope["headers"])
         ):
+            return await self.app(scope, receive, send)
+        token = next(
+            (
+                v.decode("latin1")
+                for k, v in scope["headers"]
+                if k.lower() == b"x-idle-herd-reservation"
+            ),
+            None,
+        )
+        if directory is None and token is None:
             return await self.app(scope, receive, send)
         started = False
         downstream_send = send
@@ -273,6 +302,27 @@ class OriginDispatch:
                 if denied is not None:
                     await trace_failure(self.local, "authentication_error")
                     return await denied(scope, receive, send)
+            if token:
+                try:
+                    peer, lease = await self.local.state.waiters.resolve_token(token)
+                except AdmissionError:
+                    # Foreign or forged capabilities are rejected by local admission.
+                    return await self.app(scope, receive, send)
+                if peer is None:
+                    return await self.app(scope, receive, send)
+                body = await read_body(receive, MAX_INFERENCE_BODY - 4096)
+                try:
+                    payload = json.loads(body)
+                except ValueError as exc:
+                    raise AdmissionError("invalid_inference_request", 422) from exc
+                if not isinstance(payload, dict) or not isinstance(payload.get("model"), str):
+                    raise AdmissionError("invalid_inference_request", 422)
+                if normalize_model_name(payload["model"]) != lease.model:
+                    raise AdmissionError("reservation_model_mismatch")
+                await self._execute(peer, lease, scope, payload, receive, send, lease.request_id)
+                return
+            if directory is None:
+                return await self.app(scope, receive, send)
             body = await read_body(receive, MAX_INFERENCE_BODY - 4096)
             replacement = body_receiver(body, receive)
             try:
@@ -344,12 +394,13 @@ class OriginDispatch:
             "POST", peer.endpoint + path, content=body, headers=headers, timeout=5
         ) as resp:
             content = await read_response(resp, MAX_BODY)
-            # Error responses never authorize execution; verify signed grants only.
-            if resp.status_code != 200:
-                raise AdmissionError("remote_admission_declined", resp.status_code)
             identity.verify_response(
                 headers["x-idle-nonce"], resp.status_code, content, resp.headers, peer.worker_id
             )
+            # Only an authenticated decline proves the worker did not grant.
+            # An unsigned/lost response leaves the origin pinned to this worker.
+            if resp.status_code != 200:
+                raise AdmissionError("remote_admission_declined", resp.status_code)
             lease = Lease.model_validate_json(content)
             if (
                 lease.worker_id != peer.worker_id

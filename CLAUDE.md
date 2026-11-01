@@ -8,7 +8,8 @@ Every node retains independent localhost ingress and durable worker admission.
 See [Phase 2 operation/security](docs/idle-herd/phase-2.md) and
 [Phase 1 recovery](docs/idle-herd/phase-1.md). Uncertain execution remains charged;
 expiry never frees running work. [Phase 3](docs/idle-herd/phase-3.md) adds
-worker-local native sensor and idle policy checks. Owner mode controls, UI and
+worker-local native sensor and idle policy checks. [Phase 4](docs/idle-herd/phase-4.md)
+adds advisory cluster capacity and bounded origin waiters. Owner mode controls, UI and
 jobs remain future work.
 The router/node commands and historical deployment notes below describe upstream.
 Follow the fork invariants in [AGENTS.md](AGENTS.md) and

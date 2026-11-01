@@ -64,15 +64,16 @@ async def test_native_single_peer_streaming_embeddings_and_running_crash(tmp_pat
                             peer_url + "/v1/capacity/acquire",
                             json={
                                 "request_id": f"origin-{i % 2}/request-{i}",
+                                "wait_ms": 0,
                                 "model": "tiny",
                             },
                         )
                         for i in range(100)
                     )
                 )
-                assert sum(reply.status_code == 200 for reply in replies) == 1
+                assert sum(reply.status_code == 201 for reply in replies) == 1
                 assert sum(reply.status_code == 429 for reply in replies) == 99
-                granted = next(reply.json() for reply in replies if reply.status_code == 200)
+                granted = next(reply.json() for reply in replies if reply.status_code == 201)
                 await client.delete(
                     peer_url + "/v1/capacity/reservations/" + granted["reservation_id"],
                     headers={"X-Idle-Herd-Reservation": granted["token"]},
@@ -138,6 +139,7 @@ async def test_native_single_peer_streaming_embeddings_and_running_crash(tmp_pat
                     json={
                         "model": "tiny",
                         "request_id": "must-not-overbook",
+                        "wait_ms": 0,
                     },
                 )
                 assert denied.status_code == 429

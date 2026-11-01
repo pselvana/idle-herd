@@ -364,7 +364,12 @@ async def test_origin_death_keeps_remote_execution_charged(tmp_path):
             assert capacity["observed_available_slots"] == 0
             denied = await client.post(
                 worker_info["url"] + "/v1/capacity/acquire",
-                json={"model": "beta", "request_id": "after-origin-death", "ttl_ms": 100},
+                json={
+                    "model": "beta",
+                    "request_id": "after-origin-death",
+                    "ttl_ms": 100,
+                    "wait_ms": 0,
+                },
             )
             assert denied.status_code == 429, denied.text
             # Remote origin requests use the default 30-second lease TTL;
@@ -372,7 +377,12 @@ async def test_origin_death_keeps_remote_execution_charged(tmp_path):
             await asyncio.sleep(30.2)
             retry = await client.post(
                 worker_info["url"] + "/v1/capacity/acquire",
-                json={"model": "beta", "request_id": "after-short-ttl", "ttl_ms": 100},
+                json={
+                    "model": "beta",
+                    "request_id": "after-short-ttl",
+                    "ttl_ms": 100,
+                    "wait_ms": 0,
+                },
             )
             assert retry.status_code == 429, retry.text
             state = (await client.get(backends[1] + "/state")).json()

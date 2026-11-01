@@ -1,14 +1,14 @@
 # Idle-Herd — Implementation Plan
 
-> **Status:** Phases 0–3 implement design/audit, single-node admission, opt-in
-> peer dispatch and worker-local idle policy. Legacy commands retain upstream
-> behavior. Phases 4–10 remain future work. See
+> **Status:** Phases 0–4 implement design/audit, single-node admission, opt-in
+> peer dispatch, worker-local idle policy and bounded capacity acquisition.
+> Legacy commands retain upstream behavior. Phases 5–10 remain future work. See
 > [verification and remaining risks](docs/idle-herd/implementation-status.md).
 > **Prepared:** November 1, 2026  
 > **Primary development environment:** Visual Studio Code + OpenAI Codex IDE extension  
 > **Target:** Cross-platform, peer-to-peer, idle-aware independent LLM inference; no dedicated inference router; **fully functional with 1, 2, or 3+ intermittently connected nodes and no guaranteed Raft quorum**.
-> **Revision:** 7 — records Phase 3 worker-local native sensor and idle policy
-> implementation and its verification limits.
+> **Revision:** 8 — records Phase 4 visibility-aware capacity, worker-token
+> acquisition and origin waiters, with explicit uncertainty and verification limits.
 
 This file, `IDLE-HERD_IMPLEMENTATION_PLAN.md`, is the canonical implementation plan.
 The architecture below describes the target system; completed design work does not
@@ -819,10 +819,19 @@ Phase 4. Native hardware sensor behavior remains unverified; see
 
 ### Phase 4 — Blocking capacity, fairness and parallel-job SDK
 
-- [ ] Implement final `GET /v1/cluster/capacity` visibility-aware response and `POST /v1/capacity/acquire` with `wait_ms`, release, inspect, idempotency, deadlines and `429`/`504`/`503` conditions.
-- [ ] Implement per-origin bounded fair waiter lists that re-check live worker admission on peer joins, slot releases, idle state changes, model installation, and timer fallback.
-- [ ] Add `GET /v1/capacity/watch` (optional) and a Python helper `async with idle_herd.acquire(model, timeout=...)`.
-- [ ] Validate N-way contention and cancellation. Keep cross-worker atomic multi-slot acquisition explicitly unsupported in MVP.
+- [x] Implement `GET /v1/cluster/capacity` visibility-aware response and `POST /v1/capacity/acquire` with `wait_ms`, worker-authoritative release/inspect, origin idempotency, deadlines and `429`/`504`/`503` conditions.
+- [x] Implement per-origin bounded fair retry lists that re-check live worker admission on peer joins, slot releases, idle state changes, inventory refresh, and timer fallback.
+- [x] Add Python helper `async with idle_herd.acquire(model, timeout=...)`. Optional SSE watch is deferred.
+- [x] Validate N-way contention and cancellation. Cross-worker atomic multi-slot acquisition remains explicitly unsupported.
+
+See [Phase 4 runtime contract](docs/idle-herd/phase-4.md) and
+[test evidence and limitations](docs/idle-herd/implementation-status.md).
+Existing lease fields remain compatible; `/openapi.json` describes the implemented
+capacity request/response models. The Phase 0 YAML still includes future scoped
+authentication, controls and other draft fields. Lost worker replies pin an
+origin claim to that worker; cancellation or timeout cannot prove remote release.
+Claims persist without automatic retention. Backend fit remains an estimate;
+arbitrary `context_tokens` constraints are rejected rather than promised.
 
 **Acceptance:** With 2 slots across changing peers, 20 simultaneous callers never double-book either worker, waiters unblock when available, and one online node never incorrectly receives `cluster_no_quorum`.
 
@@ -1155,10 +1164,10 @@ limitations rather than treating roadmap guarantees as implemented behavior.
 - OpenAI Codex VS Code extension: https://marketplace.visualstudio.com/items?itemName=OpenAI.chatgpt
 - Codex IDE workflow: https://learn.chatgpt.com/docs/codex/ide
 
-**Revision:** November 1, 2026 (v7). Records Phase 0–3 implementation,
-including worker-local idle policy and native sensor interfaces. Hardware sensor
+**Revision:** November 1, 2026 (v8). Records Phase 0–4 implementation,
+including worker-local idle policy, native sensor interfaces and origin capacity waits. Hardware sensor
 and backend acceptance and documented recovery/fit limits remain explicit.
-Phases 4–10 remain future work; optional Raft stays outside inference and
+Phases 5–10 remain future work; optional Raft stays outside inference and
 Docker/Compose stays in Phase 10. Any upstream guidance suggesting an always-on
 router or mandatory Raft must be interpreted using current §§0–4, 8–9, 11–12.
 

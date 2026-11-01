@@ -1,8 +1,9 @@
-"""Local worker contracts (cluster-wide waits arrive in Phase 4)."""
+"""Worker admission and bounded origin-local capacity contracts."""
 
 from __future__ import annotations
 
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,6 +56,7 @@ class PeerSettings(BaseSettings):
     seeds: list[str] = Field(default_factory=list, max_length=128)
     peer_interval: float = Field(default=5, ge=0.1, le=300)
     peer_ttl: float = Field(default=30, ge=0.2, le=600)
+    max_waiters: int = Field(default=256, ge=1, le=10000)
 
     @field_validator("peer_endpoint")
     @classmethod
@@ -108,10 +110,11 @@ class AcquireRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     model: str = Field(min_length=1, max_length=512)
-    request_id: str = Field(min_length=1, max_length=128)
+    request_id: str = Field(default_factory=lambda: str(uuid4()), min_length=1, max_length=128)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
     ttl_ms: int = Field(default=30000, ge=100, le=120000)
     slots: Literal[1] = 1
-    wait_ms: Literal[0] = 0
+    wait_ms: int = Field(default=60000, ge=0, le=120000)
     workload: Workload = "interactive"
     idle_only: bool = False
 
@@ -176,7 +179,8 @@ class Capacity(BaseModel):
 
 
 class AdmissionError(Exception):
-    def __init__(self, reason: str, status: int = 409):
+    def __init__(self, reason: str, status: int = 409, details: dict[str, int] | None = None):
         super().__init__(reason)
         self.reason = reason
         self.status = status
+        self.details = details

@@ -158,6 +158,7 @@ async def test_shared_model_memory_and_model_slot_limits(tmp_path):
     ledger = LocalLedger(settings, memory_fit)
     await ledger.open()
     try:
+        assert (await ledger.capacity("small:latest")).total_slots == 1
         await ledger.acquire(spec("a"))
         with pytest.raises(AdmissionError, match="busy"):
             await ledger.acquire(spec("b"))

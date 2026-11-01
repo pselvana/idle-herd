@@ -1,5 +1,151 @@
 # Idle-Herd implementation status
 
+## Phase 4 — visibility-aware capacity and origin waiters, November 1, 2026
+
+`idle-herd` now supports advisory capacity across its reachable peer view and
+bounded public acquisition on a live worker. See [runtime contract and helper](phase-4.md).
+Earlier phase sections below remain historical records.
+
+- [x] Model-specific capacity totals, known/reachable/stale/offline counts, per-peer
+  freshness, nullable busy, timestamps and explicit non-authoritative scope.
+  Signed live remote probes exclude stale/future, mismatched and failed replies;
+  multiple endpoints for one worker cannot inflate counts.
+- [x] Public acquire defaults to a 60-second wait, bounded at 120 seconds;
+  `wait_ms=0` is nonblocking. Successful admission returns 201 and the worker's
+  persisted fenced token. Contention is 429 with Retry-After; unavailable/ineligible
+  views are 503; expired waits are 504 with latest-round diagnostic counters.
+- [x] Bounded origin-local retry rounds, compatible-waiter fairness, independent
+  slow remote attempts, lease/discovery/policy/inventory wakeups and 250 ms fallback.
+- [x] Durable origin idempotency/target claims, request-ID conflict fences and
+  same-key concurrent callers. Unknown remote replies pin the target before retry;
+  only authenticated declines permit trying another worker. Client retries never
+  treat an uncertain response as proof of no reservation.
+- [x] Worker-authoritative local/remote inspect and release, explicit remote token
+  execution through the origin, authenticated negative RPC replies and immutable
+  token-binding verification. Unreachable workers return `worker_unreachable`;
+  a cached lease cannot prove active state or release.
+- [x] Deadline/disconnect/cancellation handling and best-effort late-grant cleanup,
+  including independent deadlines for shared-key callers and refusal of expired
+  post-commit grants. Storage errors fail closed and are traced. Known
+  running/quarantined work remains charged.
+- [x] Python `async with idle_herd.acquire(model, timeout=...)` helper with
+  cancellation-aware release and safe logging of unconfirmed cleanup.
+- [ ] Optional SSE capacity watch (the helper satisfies the Phase 4 alternative).
+- [ ] Real Ollama/MLX, physical sensors, Linux/Windows native execution, service
+  installers and hardware/sleep/wake acceptance. These remain unverified.
+- [ ] Phases 5–10: durable jobs, owner controls/UI, sharing, optional admin Raft,
+  diagnostics/packaging and finally Docker/Compose.
+
+### Phase 4 evidence and limitations
+
+ASGI tests with fabricated backends exercise 20 simultaneous clients on two local
+slots, then 20 callers across two origins/two signed peer workers. They verify
+worker slot uniqueness under contention, peer withdrawal/rejoin, model
+removal/reappearance, stale busy/idle observations and live policy refusal.
+Other tests cover FIFO compatible waiters, new arrivals, queue bounds, shared-key
+cancellation, timer fallback, immediate lease/policy wakeups, timeout diagnostics,
+slow remote attempts, late grant cleanup, signed response tampering, stale/future
+capacity timestamps, duplicate endpoint identities and helper cancellation.
+
+The origin SQLite tests persist claims across scheduler restart, reject conflicting
+parameters and retain the selected worker after a fabricated lost reply. Native
+process fixtures use real loopback HTTP/TLS and fabricated models for explicit
+remote acquisition/inspection/execution/release and a two-peer survivor.
+Existing native tests cover either N=2 survivor, each N=3 survivor, partition/rejoin,
+seed loss, 100-client contention, commit-before-lost-reply, running worker crash
+and origin death with a backend still running. These are runtime tests with mock
+models, not real backend or physical sensor acceptance.
+
+Local admission, inference and capacity waits contain no quorum dependency.
+No Raft sidecar exists to kill; the implementation cannot demonstrate a real
+Raft-loss integration until Phase 8. There is no central queue, required seed,
+port reassignment or Docker integration. OpenAI/Ollama, Anthropic Messages and
+OpenAI Responses translators remain regression-tested.
+
+Claims and request-ID aliases currently persist indefinitely; automatic retention
+and indexing/compaction for long-lived histories remain work. Protect
+`origin.sqlite` because it contains bearer reservation capabilities. Origin
+restart preserves idempotency claims, but does not autonomously resume waiting
+HTTP clients or create durable jobs. A lost reply can retain an unused worker
+reservation until TTL; failed cancellation/release is an unknown outcome.
+Retries remain pinned to an uncertain worker, possibly sacrificing progress until
+the deadline rather than risking another slot claim. Worker restart fences old
+attempts; expired/running/quarantined state cannot become a new grant.
+
+Only one slot per acquisition is supported; `context_tokens` and unsupported
+fields are rejected. Model fit remains the Phase 1 conservative memory estimate,
+not a proof of arbitrary context/VRAM compatibility. Local caller scopes/owner
+controls remain Phase 6 work. The running `/openapi.json` describes actual typed
+capacity models; the older YAML still includes future authentication, owner
+controls and different draft envelope/lease names. No global exactly-once,
+global fairness or complete capacity guarantee is claimed. Next: **Phase 5**.
+
+### Phase 4 commands and results
+
+Host: macOS arm64, Python 3.14.2, existing core/dev environment. `uv` was absent
+from PATH; it was found at `/private/tmp/idle-herd-phase0-tools/bin/uv`. All uv
+commands use `UV_CACHE_DIR=/private/tmp/idle-herd-phase0-uv-cache`,
+`--offline --no-sync` and the existing environment.
+
+| Command | Result |
+|---|---|
+| `uv run --offline --no-sync pytest -q --tb=short > /private/tmp/idle-herd-phase4-final-tests.log 2>&1` | Exit 0: **2177 passed, 3 skipped, 3 warnings in 76.39s**; 2180 collected, including native loopback process tests |
+| `uv run --offline --no-sync ruff check src/` | Exit 0: all checks passed |
+| `uv run --offline --no-sync ruff format --check src/` | Exit 0: 100 files already formatted |
+| `.venv/bin/ruff check tests/test_peer` | Exit 0: all checks passed |
+| `.venv/bin/ruff format --check tests/test_peer` | Exit 0: 19 files already formatted |
+| `.venv/bin/pytest -q tests/test_peer/test_waiters.py` | Exit 0: 16 passed, including independent shared-key deadlines and expired late grants |
+| `.venv/bin/pytest -q tests/test_peer/test_capacity_view.py` | Exit 0: 14 passed, including stale/future observations, worker deduplication and SDK cancellation |
+| `.venv/bin/pytest -q tests/test_peer/test_capacity_integration.py -k 'not remote_explicit' --tb=short` | Exit 0: 8 passed, 1 native deselected for this sandbox-only focused run; the final full suite includes that native test |
+| App OpenAPI inspection via `.venv/bin/python` | Capacity 200 schema is `ClusterCapacity`; acquire 201 schema is `Lease` |
+| `git diff --check` | Exit 0 |
+
+Initial native tests hit the sandbox's loopback bind restriction; they were rerun
+with approved loopback access. An initial native explicit-token test used
+`/api/generate`, which its fabricated backend does not implement; it now uses the
+fixture's supported `/api/chat` route. No failed assertion was skipped.
+Inherited optional ONNX skips, queue coroutine warnings and fixture-loop-scope
+deprecation remain. Five inherited telemetry-schema tests may access the internet
+despite uv's offline flag; model-backend tests use mock/loopback transports.
+No Go/container tests, dependency changes, live model execution, fleet deployment,
+installer/soak, CVE audit, commit, push or publication was performed.
+Work stayed on `main` using GPT-6.1 Terra subagents and no worktrees.
+
+### Exact Phase 4 changed files
+
+Added source:
+`src/fleet_manager/peer/capacity.py`,
+`src/fleet_manager/peer/waiters.py`,
+`src/fleet_manager/idle_herd.py`.
+
+Modified source:
+`src/fleet_manager/peer/app.py`,
+`src/fleet_manager/peer/discovery.py`,
+`src/fleet_manager/peer/local_ledger.py`,
+`src/fleet_manager/peer/models.py`,
+`src/fleet_manager/peer/network.py`.
+
+Added tests:
+`tests/test_peer/test_capacity_integration.py`,
+`tests/test_peer/test_capacity_view.py`,
+`tests/test_peer/test_waiters.py`.
+
+Modified tests:
+`tests/test_peer/test_app.py`,
+`tests/test_peer/test_ledger.py`,
+`tests/test_peer/test_native.py`,
+`tests/test_peer/test_peer_network.py`.
+
+Documentation:
+`AGENTS.md`, `CLAUDE.md`, `IDLE-HERD_IMPLEMENTATION_PLAN.md`, `README.md`,
+`docs/idle-herd/adr-002-admission-and-capacity.md`,
+`docs/idle-herd/api.md`,
+`docs/idle-herd/architecture.md`,
+`docs/idle-herd/development.md`,
+`docs/idle-herd/security.md`,
+`docs/idle-herd/implementation-status.md`,
+and new `docs/idle-herd/phase-4.md`.
+
 ## Phase 3 — implemented native sensor interfaces and idle policy, November 1, 2026
 
 `idle-herd` now owns typed native host observations and worker-local eligibility

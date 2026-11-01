@@ -161,10 +161,10 @@ async def test_inventory_and_capacity_without_any_peer_or_raft(tmp_path, monkeyp
         assert (await client.get("/heartbeat")).status_code == 404
         snapshot = (await client.get("/v1/cluster/capacity?model=tiny")).json()
         assert snapshot["observed_available_slots"] == 1
-        assert snapshot["scope"] == "local_worker"
+        assert snapshot["scope"] == "reachable_peers"
         assert snapshot["globally_authoritative"] is False
         assert snapshot["quorum"] is None
-        assert snapshot["discovery_state"] == "disabled"
+        assert snapshot["discovery_state"] == "complete_known_view"
         backend.down = True
         snapshot = (await client.get("/v1/cluster/capacity?model=tiny")).json()
         assert snapshot["observed_available_slots"] == 0
@@ -183,7 +183,7 @@ async def test_explicit_token_replay_and_reused_queue_context(tmp_path, monkeypa
                     "model": "tiny",
                 },
             )
-            assert result.status_code == 200
+            assert result.status_code == 201
             return result.json()
 
         for i in range(2):
@@ -284,18 +284,19 @@ async def test_local_boundary_rejects_browser_and_rebinding(tmp_path, monkeypatc
         assert not backend.calls
 
 
-async def test_unknown_models_and_deferred_waits_fail_explicitly(tmp_path, monkeypatch):
+async def test_unknown_models_and_invalid_waits_fail_explicitly(tmp_path, monkeypatch):
     async with peer(tmp_path, monkeypatch) as (_, client, backend):
         response = await client.post(
             "/v1/capacity/acquire",
             json={
                 "request_id": "missing",
                 "model": "missing",
+                "wait_ms": 0,
             },
         )
-        assert response.status_code == 404
-        assert response.json()["error"]["type"] == "not_installed"
-        for extra in ({"wait_ms": 1}, {"slots": 2}):
+        assert response.status_code == 503
+        assert response.json()["error"]["type"] == "no_eligible_worker"
+        for extra in ({"wait_ms": -1}, {"wait_ms": 120001}, {"slots": 2}):
             response = await client.post(
                 "/v1/capacity/acquire",
                 json={
@@ -307,10 +308,10 @@ async def test_unknown_models_and_deferred_waits_fail_explicitly(tmp_path, monke
             assert response.status_code == 422
         response = await client.post(
             "/v1/capacity/acquire",
-            json={"model": "tiny", "request_id": "idle", "idle_only": True},
+            json={"model": "tiny", "request_id": "idle", "idle_only": True, "wait_ms": 0},
         )
         assert response.status_code == 503
-        assert response.json()["error"]["type"] == "activity_unknown"
+        assert response.json()["error"]["type"] == "no_eligible_worker"
 
 
 async def test_shutdown_drains_traces_and_latency_without_database_races(
