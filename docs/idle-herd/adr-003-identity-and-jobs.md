@@ -1,7 +1,7 @@
 # ADR 003: Peer trust and durable jobs
 
 **Status: Phase 2 identity/enrollment and authenticated peer RPC implemented;
-durable jobs/replication remain planned.** See [Phase 2](phase-2.md) for concrete
+Phase 5 durable jobs and acknowledged replication implemented; see [Phase 5](phase-5.md).** See [Phase 2](phase-2.md) for concrete
 TLS/signature, revocation, expiry, scope and persistence behavior.
 
 Initialize a stable cluster UUID, local node keypair and trust anchor in durable local storage. Enrollment uses an administrator-signed, time-limited device-specific credential or protected direct pairing; peer discovery alone grants no trust. Authenticate direct admission, execution and transfer RPCs, enforce authorization, reject conflicting node IDs/keys or trust anchors, and never expose internal backend URLs to clients. Keys survive ordinary restart. Revocation and membership changes propagate when reachable: a partition prevents instantaneous global revocation or guaranteed global single-use invites. Use short-lived credentials, expiry and conservative reconciliation; do not promise stronger revocation semantics.
@@ -10,4 +10,5 @@ An origin accepts a locally durable job only after the full record and input, or
 
 Recovery is at least once for explicitly retry-safe work: a reachable replica may retry after origin loss, with persistent job and distinct attempt IDs, bounded retries and result reconciliation. Partitioned replicas may overlap; a disconnected worker may still run. Report unknown outcomes when uncertain, and never automatically fail over side-effecting/non-idempotent work. Strict single execution requires an available strong authority and reduced availability. Partial streams cannot promise identical continuation.
 
-Future acceptance: inject crashes around journal writes and replica acknowledgments; never acknowledge incomplete local or replicated persistence. With only one copy offline, no survivor claims its job can run. Partition origin and replica during execution and observe distinct attempts and possible duplicates. Verify no automatic retry of side-effecting work, forged/expired credentials rejected, conflicting identities rejected, and revocation limitations visible during a partition.
+Acceptance evidence is recorded in [implementation status](implementation-status.md).
+Further hardware/power-loss acceptance: inject crashes around journal writes and replica acknowledgments; never acknowledge incomplete local or replicated persistence. With only one copy offline, no survivor claims its job can run. Partition origin and replica during execution and observe distinct attempts and possible duplicates. Verify no automatic retry of side-effecting work, forged/expired credentials rejected, conflicting identities rejected, and revocation limitations visible during a partition.

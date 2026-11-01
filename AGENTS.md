@@ -1,13 +1,14 @@
 # AGENTS.md — Ollama Herd
 
-## Idle-Herd fork instructions (Phase 4)
+## Idle-Herd fork instructions (Phase 5)
 
 This checkout is the Idle-Herd fork. The upstream guidance below is retained;
 these fork rules govern the architecture where it differs. `idle-herd` now runs
 local ingress and durable worker admission, with opt-in authenticated peer
 discovery/direct dispatch, worker-local idle policy and no Raft. See
 [Phase 2](docs/idle-herd/phase-2.md), [Phase 3](docs/idle-herd/phase-3.md),
-and [Phase 4](docs/idle-herd/phase-4.md).
+[Phase 4](docs/idle-herd/phase-4.md), and
+[Phase 5 durable jobs](docs/idle-herd/phase-5.md).
 Legacy `herd` / `herd-node` retain upstream behavior. Start at
 [implementation status](docs/idle-herd/implementation-status.md)
 and the canonical [implementation plan](IDLE-HERD_IMPLEMENTATION_PLAN.md).
@@ -32,6 +33,10 @@ and the canonical [implementation plan](IDLE-HERD_IMPLEMENTATION_PLAN.md).
 - Model sharing requires authorization, provenance/digest verification, compatible
   formats/backends and a destination-local install lock. Recovery is honestly
   at least once; never promise global exactly-once execution or complete capacity.
+- Job inputs, attempts and results belong to the origin journal, separate from
+  worker lease authority. Replicated 202 requires verified durable accepted copies;
+  retry/takeover requires explicit safety and duplicate consent. Never automatically
+  replay side-effecting work or use job cancellation to clear worker quarantine.
 - Preserve upstream MIT attribution and all existing compatibility surfaces,
   including Anthropic Messages and OpenAI Responses. Keep the current port map.
 - Work directly on main; do not use worktrees. Implement only the requested

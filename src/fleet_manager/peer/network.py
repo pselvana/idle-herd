@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import time
 import uuid
 from typing import Literal
@@ -117,9 +118,11 @@ class PeerRPC:
 
         try:
             await self._handle(scope, receive, tracked)
-        except (AdmissionError, IdentityError, ValidationError, ValueError) as exc:
+        except (AdmissionError, IdentityError, ValidationError, ValueError, sqlite3.Error) as exc:
             if isinstance(exc, AdmissionError):
                 reason = exc.reason
+            elif isinstance(exc, sqlite3.Error):
+                reason = "peer_storage_unavailable"
             elif isinstance(exc, ValidationError):
                 # Pydantic's rendered errors can contain the submitted prompt.
                 reason = "invalid_peer_request"
@@ -131,7 +134,13 @@ class PeerRPC:
             status = (
                 exc.status
                 if isinstance(exc, AdmissionError)
-                else (403 if isinstance(exc, IdentityError) else 422)
+                else (
+                    503
+                    if isinstance(exc, sqlite3.Error)
+                    else 403
+                    if isinstance(exc, IdentityError)
+                    else 422
+                )
             )
             content = json.dumps({"error": {"type": reason}}).encode()
             signed = {}
@@ -155,6 +164,8 @@ class PeerRPC:
                 "/peer/v1/release",
                 "/peer/v1/inspect",
                 "/peer/v1/capacity",
+                "/peer/v1/jobs/store",
+                "/peer/v1/jobs/fetch",
             }
             or scope.get("query_string")
         ):
@@ -175,7 +186,17 @@ class PeerRPC:
         )
         nonce = headers["x-idle-nonce"]
         scope["idle_herd_verified_nonce"] = nonce
-        if path.endswith("exchange"):
+        if path in {"/peer/v1/jobs/store", "/peer/v1/jobs/fetch"}:
+            from fleet_manager.peer.replication import FetchRequest, StoreRequest
+
+            replication = getattr(self.local.state, "job_replication", None)
+            if replication is None:
+                raise AdmissionError("job_replication_disabled", 503)
+            if path.endswith("store"):
+                result = await replication.store(principal, StoreRequest.model_validate_json(body))
+            else:
+                result = await replication.fetch(principal, FetchRequest.model_validate_json(body))
+        elif path.endswith("exchange"):
             result = await self.local.state.directory.exchange(
                 principal, Exchange.model_validate_json(body)
             )

@@ -1,4 +1,4 @@
-# Idle-Herd architecture: Phase 4 and target design
+# Idle-Herd architecture: Phase 5 and target design
 
 **Current runtime:** `idle-herd` combines localhost ingress, local Ollama inventory,
 and durable worker admission in one native process. Phase 2 adds a separately
@@ -23,6 +23,12 @@ idempotency and bounded fair retry rounds. Each round obtains a live worker gran
 snapshots never allocate slots. Origin deadlines and cancellation stop waiting
 without declaring uncertain worker work stopped. Inspect/release and explicit
 token execution route directly to the issuing worker. No global queue is required.
+
+[Phase 5](phase-5.md) adds a separate origin-owned WAL job journal with bounded
+input/result storage, durable attempt histories and optional acknowledged peer copies.
+Only explicitly retry-safe jobs with duplicate consent may recover on another peer.
+Reconciliation preserves independent attempts; cancellation cannot free worker
+quarantine. Local jobs and inference have no replication or quorum prerequisite.
 
 The target is a symmetric native peer: every peer has local ingress, an origin scheduler and journal, worker-local admission, backend adapters, authenticated discovery and host sensors. A peer may be ingress-only if its backend or policy is ineligible. The origin ranks candidates from a freshness-labeled peer view, asks a worker directly for admission, then dispatches using that worker's token. The worker owns its ledger and checks current resources and policy. Jobs, membership, model inventory, lease ledger and optional administrative consensus have distinct authorities; gossip cannot allocate resources. See the ADRs in this directory and the planned API contract in [api.md](api.md).
 

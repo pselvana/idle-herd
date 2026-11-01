@@ -1,4 +1,4 @@
-# Security boundary: Phases 1–4 and target design
+# Security boundary: Phases 1–5 and target design
 
 The table below is the target threat model. Phase 1 `idle-herd` binds ingress to
 127.0.0.1, rejects non-loopback clients, unexpected Host and browser Origin/cross-site
@@ -28,6 +28,14 @@ protect it like the worker ledger. Waiter count is bounded with
 `IDLE_HERD_MAX_WAITERS` (default 256); historical claims currently have no expiry.
 Peer capacity is advisory even after signature and freshness checks. See
 [Phase 4 limitations](phase-4.md).
+Phase 5 adds signed job store/fetch RPCs: only the origin publishes snapshots;
+only the origin and acknowledged holders can fetch them. Commit precedes each
+digest-bound acknowledgment, and accepted replicas are required before replicated
+202 responses. Private SQLite files contain full prompts/results; protect storage
+and backups. TLS protects transport; application-level encryption at rest and
+same-user job isolation are not provided. Job validation errors omit submitted
+inputs, and state summaries omit payloads, results and tokens. See [job limits and
+recovery](phase-5.md).
 See [Phase 1](phase-1.md); Phase 6's authenticated owner API remains required.
 [The audit](upstream-audit.md) records inherited unauthenticated
 routes, wildcard binds and external telemetry. Do not expose that runtime as an

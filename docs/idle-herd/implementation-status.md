@@ -1,5 +1,111 @@
 # Idle-Herd implementation status
 
+## Phase 5 — durable jobs and acknowledged replicas, November 1, 2026
+
+`idle-herd` now serves origin-local persistent jobs and opt-in authenticated peer
+copies. See [the actual API, recovery semantics and limits](phase-5.md). Earlier
+phase sections remain historical records. Next: **Phase 6**, authenticated owner
+controls and the native macOS companion.
+
+- [x] Separate SQLite WAL/FULL journal with complete input/result persistence,
+  origin-scoped idempotency, crash-consistent state and distinct attempt IDs.
+- [x] POST/status/result/cancel localhost job APIs using existing inference wire
+  translators and live worker admission. No central router, leader or quorum.
+- [x] Digest-bound signed durable acknowledgments, prepared/accepted replica
+  stages, explicit additional-copy counts and caller-authorized downgrade only.
+  No 202 or origin execution activation before the accepted-copy threshold.
+- [x] Restart recovery distinguishing provably undispatched local admission from
+  unknown dispatched execution; bounded retry and delayed replica takeover only
+  with explicit retry safety and possible-duplicate consent.
+- [x] Reconciliation of independent attempt/result histories, conflict evidence,
+  persistent cancellation propagation and no unsafe automatic tool/action replay.
+- [x] Bounded inputs, results and logical journal storage; safe summaries and
+  validation diagnostics; peer fetch restricted to origin/certificate holders.
+- [ ] Real model/hardware, power-loss/storage certification, Linux/Windows native
+  service execution and physical sensor acceptance remain unverified.
+- [ ] Phases 6–10: owner controls/UI, verified model sharing, optional admin Raft,
+  diagnostics/installers and finally Docker/Compose.
+
+### Phase 5 evidence and limitations
+
+Unit/ASGI tests cover concurrent same-key submissions, changed parameters, committed
+input/result retrieval after reopen, failed commits and dispatch-boundary writes,
+accepted-copy acknowledgment thresholds checked through an independent SQLite
+reader, rejected foreign replica reads/writes, completion synchronization, simulated
+origin outage and safe takeover, unsafe takeover refusal, conflicting result
+histories, retry budget exhaustion and cancellation of retry-safe running work.
+A slow copy request cannot block acceptance/execution of an unrelated local job.
+Oversized requests and malformed payloads return bounded, redacted errors.
+
+Native processes over real loopback HTTP/TLS use fabricated inference backends.
+They kill/restart the daemon with completed jobs and pending admission, preserve
+results/idempotency, and verify that unsafe running work remains unknown with the
+independent backend still active and the slot quarantined. Configured N=2 and N=3
+clusters shrink to one survivor, which accepts and completes a local durable job.
+Signed ASGI peer meshes exercise replicated acceptance and takeover; a real-model
+or native-process replicated takeover was not run. Existing native churn/streaming
+and compatibility tests continue to cover the earlier phases.
+
+Job persistence is separate from worker authority. No retry, cancellation or TTL
+clears uncertain backend execution. No Raft service exists; ordinary paths have no
+quorum dependency. No Docker, model sharing, owner control endpoint, UI, deployment,
+service install, release, commit or publication was added. Terra subagents were
+used as requested; work stayed on main without worktrees.
+
+Replicated recovery needs a complete accepted copy, known origin endpoint, explicit
+safe/duplicate consent, remaining known attempt budget, eligible local backend and
+persisted direct-probe delay. Partitions can run duplicate attempts and temporarily
+hide cancellation or newer results; at-least-once recovery is not global uniqueness.
+Submission response loss may leave an accepted job; repeat its idempotency key.
+Local durability cannot survive loss/unavailability of its only storage.
+
+Logical journal limits are 10,000 jobs, 64 MiB total JSON and 1 MiB per job; WAL and
+filesystem overhead are additional. Submissions are capped at 256 KiB and result
+bodies at 32 KiB. History is retained, with no automatic archival or external blob
+store. Oversized/incomplete results remain unknown; contradictory histories can
+require operator interpretation. Private local SQLite files contain full inputs
+and outputs. TLS protects peer transport; at-rest application encryption and
+same-user caller isolation remain absent. Phase 6 owner scopes are still needed.
+
+### Phase 5 commands and results
+
+Host: macOS arm64/Python 3.14.2, existing core/dev environment. `uv` below denotes
+`/private/tmp/idle-herd-phase0-tools/bin/uv`, with
+`UV_CACHE_DIR=/private/tmp/idle-herd-phase0-uv-cache` on every invocation.
+The first restricted full run reported **19 failed, 2177 passed, 8 skipped**;
+failures were denied native socket/OS probes. Native access was then approved;
+assertions were retained. The five extra restricted skips were inherited remote
+telemetry-schema checks. `uv --offline` controls dependency access, not test network
+access. The three remaining skips and coroutine warnings are inherited, as is the
+pytest-asyncio fixture-loop deprecation notice.
+
+| Command | Result |
+|---|---|
+| `uv run --offline pytest --tb=short -q > /private/tmp/idle-herd-phase5-verified-pytest.log 2>&1` with native access | Exit 0: **2214 passed, 3 skipped, 3 warnings in 89.26s**; 2217 collected |
+| `.venv/bin/pytest tests/test_peer/test_job_service.py tests/test_peer/test_job_replication.py tests/test_peer/test_jobs_journal.py --tb=short -q` | Final focused rerun after attempt-state review: **32 passed in 3.78s** |
+| `.venv/bin/pytest tests/test_peer/test_jobs_native.py -q --tb=short` with native access | **5 passed**: queued/completed restart, unknown running execution, N=2/N=3 survivors; included in full suite |
+| `uv run --offline ruff check src/` | Exit 0: all checks passed |
+| `uv run --offline ruff format --check src/` | Exit 0: 103 files already formatted |
+| `.venv/bin/ruff check tests/test_peer` and `.venv/bin/ruff format --check tests/test_peer` | Exit 0: all checks passed, 23 files formatted |
+| `create_peer_app().openapi()` assertions using `.venv/bin/python` | Durable job submission/status/result/cancellation routes present |
+| `git diff --check` | Exit 0 |
+
+The full suite adds 37 Phase 5 cases to the Phase 4 baseline. The final focused
+rerun also verifies the distinct-worker acknowledgment regression and the
+interrupted attempt's persisted unknown state. The three skips are optional ONNX
+cases; the three warnings are inherited unawaited `_dummy_process` coroutines.
+No Go or container commands, CVE audit, model downloads or release checks ran.
+
+### Exact Phase 5 changed files
+
+Modified: `AGENTS.md`, `CLAUDE.md`, `IDLE-HERD_IMPLEMENTATION_PLAN.md`, `README.md`,
+`src/fleet_manager/peer/app.py`, `src/fleet_manager/peer/network.py`, and
+`docs/idle-herd/{adr-003-identity-and-jobs.md,api.md,architecture.md,development.md,security.md,implementation-status.md}`.
+
+Added: `src/fleet_manager/peer/{jobs.py,job_service.py,replication.py}`,
+`tests/test_peer/{test_jobs_journal.py,test_job_service.py,test_job_replication.py,test_jobs_native.py}`,
+and `docs/idle-herd/phase-5.md`.
+
 ## Phase 4 — visibility-aware capacity and origin waiters, November 1, 2026
 
 `idle-herd` now supports advisory capacity across its reachable peer view and

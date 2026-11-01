@@ -837,12 +837,17 @@ arbitrary `context_tokens` constraints are rejected rather than promised.
 
 ### Phase 5 — Local durable jobs and optional replicated recovery
 
-- [ ] Implement SQLite WAL journal on the origin, persistent payload/result storage, job state machine, idempotency and retry policy.
-- [ ] Define `durability=local` and optional `durability=replicated` with explicit ack count, persistence and downgrade semantics.
-- [ ] Add replica recovery for **retry-safe** jobs with attempt IDs, bounded takeover delays, outcome reconciliation, and an explicit possible-duplicate warning under partitions.
-- [ ] Prevent unsafe automatic retry for tools/actions with side effects. Expose `unknown_outcome` where attribution is uncertain.
+- [x] Implement SQLite WAL journal on the origin, persistent payload/result storage, job state machine, idempotency and retry policy.
+- [x] Define `durability=local` and optional `durability=replicated` with explicit ack count, persistence and downgrade semantics.
+- [x] Add replica recovery for **retry-safe** jobs with attempt IDs, bounded takeover delays, outcome reconciliation, and an explicit possible-duplicate warning under partitions.
+- [x] Prevent unsafe automatic retry for tools/actions with side effects. Expose `unknown_outcome` where attribution is uncertain.
 
 **Acceptance:** One-node jobs survive native service restarts; two-node replicated jobs can resume on surviving peer only when the complete accepted replica is present; no promises of completion while all relevant durable copies are offline; long jobs can be retried under documented at-least-once semantics.
+
+Implementation/evidence: [Phase 5 runtime and limits](docs/idle-herd/phase-5.md)
+and [status](docs/idle-herd/implementation-status.md). Native mock processes test
+restart and single-survivor jobs; signed ASGI peers test replicated takeover.
+Real-model, power-loss and Linux/Windows service acceptance remain unverified.
 
 ### Phase 6 — Native macOS menu bar app and local owner controls
 
@@ -1164,10 +1169,11 @@ limitations rather than treating roadmap guarantees as implemented behavior.
 - OpenAI Codex VS Code extension: https://marketplace.visualstudio.com/items?itemName=OpenAI.chatgpt
 - Codex IDE workflow: https://learn.chatgpt.com/docs/codex/ide
 
-**Revision:** November 1, 2026 (v8). Records Phase 0–4 implementation,
-including worker-local idle policy, native sensor interfaces and origin capacity waits. Hardware sensor
+**Revision:** November 1, 2026 (v9). Records Phase 0–5 implementation,
+including worker-local idle policy, native sensor interfaces, origin capacity waits
+and durable jobs with acknowledged peer copies. Hardware sensor
 and backend acceptance and documented recovery/fit limits remain explicit.
-Phases 5–10 remain future work; optional Raft stays outside inference and
+Phases 6–10 remain future work; optional Raft stays outside inference and
 Docker/Compose stays in Phase 10. Any upstream guidance suggesting an always-on
 router or mandatory Raft must be interpreted using current §§0–4, 8–9, 11–12.
 

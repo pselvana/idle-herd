@@ -14,6 +14,7 @@ import aiosqlite
 import httpx
 import psutil
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from fleet_manager.models.config import ServerSettings
@@ -30,7 +31,13 @@ from fleet_manager.peer.backend import AdmissionTransport, OllamaBackend, Reques
 from fleet_manager.peer.capacity import ClusterCapacity, cluster_capacity
 from fleet_manager.peer.local_ledger import LocalLedger
 from fleet_manager.peer.models import AcquireRequest, AdmissionError, Lease, PeerSettings, Workload
-from fleet_manager.peer.network import OriginDispatch, PeerRPC, trace_failure
+from fleet_manager.peer.network import (
+    OriginDispatch,
+    PeerRPC,
+    body_receiver,
+    read_body,
+    trace_failure,
+)
 from fleet_manager.peer.policy import IdlePolicy
 from fleet_manager.peer.sensors import Sensor, native_sensor
 from fleet_manager.peer.stores import PeerLatencyStore, PeerTraceStore
@@ -166,6 +173,15 @@ class LocalBoundary:
             return await JSONResponse(
                 status_code=403, content={"error": {"type": "local_clients_only"}}
             )(scope, receive, send)
+        if scope["path"] == "/v1/jobs" and scope["method"] == "POST":
+            try:
+                body = await read_body(receive, 256 * 1024)
+            except AdmissionError:
+                await trace_failure(self.local, "job_request_too_large")
+                return await JSONResponse(
+                    status_code=413, content={"error": {"type": "job_request_too_large"}}
+                )(scope, receive, send)
+            receive = body_receiver(body, receive)
         token = headers.get(b"x-idle-herd-reservation")
         workload = headers.get(b"x-idle-herd-workload", "interactive")
         idle_only = headers.get(b"x-idle-herd-idle-only", "false")
@@ -316,6 +332,20 @@ def create_peer_app(
             stack.push_async_callback(waiters.close)
             app.state.waiters = waiters
 
+            from fleet_manager.peer.job_service import JobService
+            from fleet_manager.peer.jobs import JobJournal
+            from fleet_manager.peer.replication import JobReplication
+
+            journal = JobJournal(Path(data_dir) / "jobs.sqlite", worker_id=ledger.worker_id)
+            await journal.open()
+            stack.push_async_callback(journal.close)
+            app.state.job_journal = journal
+            app.state.job_replication = JobReplication(app)
+            jobs = JobService(app)
+            app.state.jobs = jobs
+            await jobs.open()
+            stack.push_async_callback(jobs.close)
+
             async def inventory_loop():
                 while True:
                     await asyncio.sleep(2)
@@ -368,6 +398,20 @@ def create_peer_app(
         embedding_compat,
     ):
         app.include_router(module.router)
+
+    from fleet_manager.peer.job_service import router as jobs_router
+
+    app.include_router(jobs_router)
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request, exc):
+        if request.url.path == "/v1/jobs":
+            # Validation inputs can contain entire prompts and tool arguments.
+            await trace_failure(app, "invalid_job_request")
+            return JSONResponse(status_code=422, content={"error": {"type": "invalid_job_request"}})
+        from fastapi.exception_handlers import request_validation_exception_handler
+
+        return await request_validation_exception_handler(request, exc)
 
     @app.exception_handler(AdmissionError)
     async def admission_error(request, exc):
