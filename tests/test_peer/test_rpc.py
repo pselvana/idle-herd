@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -12,6 +13,12 @@ from fleet_manager.peer.app import create_peer_app, create_peer_rpc_app
 from fleet_manager.peer.identity import PeerIdentity
 from fleet_manager.peer.models import PeerSettings
 from fleet_manager.peer.network import MAX_INFERENCE_BODY
+from fleet_manager.peer.sensors import IdleSignal
+
+
+class HealthySensor:
+    async def sample(self):
+        return IdleSignal(observed_at=time.time(), source="test", memory_available_gb=48)
 
 
 class WireBytes(httpx.AsyncByteStream):
@@ -48,8 +55,9 @@ async def worker(path, monkeypatch, *, incomplete=False, buffered=True, broken=F
         return httpx.Response(200, stream=WireBytes(content, broken=broken))
 
     app = create_peer_app(
-        PeerSettings(data_dir=str(path), request_memory_gb=0.000001),
+        PeerSettings(data_dir=str(path), request_memory_gb=0.000001, background_policy="always"),
         backend_transport=httpx.MockTransport(backend),
+        sensor=HealthySensor(),
     )
     async with app.router.lifespan_context(app):
         identity = await PeerIdentity.open(

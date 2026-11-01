@@ -173,7 +173,10 @@ class PeerRPC:
         elif path.endswith("acquire"):
             spec = AcquireRequest.model_validate_json(body)
             spec = spec.model_copy(
-                update={"request_id": peer_request_id(principal, spec.request_id)}
+                update={
+                    "request_id": peer_request_id(principal, spec.request_id),
+                    "workload": "background",
+                }
             )
             result = await self.local.state.ledger.acquire(spec)
         else:
@@ -233,7 +236,8 @@ class OriginDispatch:
     """Use local admission first; dispatch remotely only after a direct worker grant.
 
     No retry occurs after execution dispatch: a broken response has unknown outcome.
-    There are no blocking waits, background/idle-only work or durable jobs here.
+    Worker policy is authoritative for background and idle-only requests.
+    There are no blocking waits or durable jobs here.
     """
 
     def __init__(self, app, local):
@@ -282,7 +286,15 @@ class OriginDispatch:
             if not candidates:
                 return await self.app(scope, replacement, send)
             request_id = str(uuid.uuid4())
-            spec = AcquireRequest(model=model, request_id=request_id)
+            from fleet_manager.peer.backend import RequestBinding, binding
+
+            current = binding.get() or RequestBinding()
+            spec = AcquireRequest(
+                model=model,
+                request_id=request_id,
+                workload=current.workload,
+                idle_only=current.idle_only,
+            )
             try:
                 lease = await self.local.state.ledger.acquire(spec)
             except AdmissionError as local_error:
@@ -293,9 +305,7 @@ class OriginDispatch:
                     (b"x-idle-herd-reservation", lease.token.encode())
                 ]
                 # LocalBoundary already ran, so install the captured binding here.
-                from fleet_manager.peer.backend import RequestBinding, binding
-
-                marker = binding.set(RequestBinding(token=lease.token))
+                marker = binding.set(current.model_copy(update={"token": lease.token}))
                 try:
                     await self.app(inner_scope, replacement, send)
                 finally:
@@ -346,6 +356,8 @@ class OriginDispatch:
                 or lease.cluster_id != identity.cluster_id
                 or lease.worker_incarnation != peer.incarnation
                 or lease.model != spec.model
+                or lease.workload != "background"
+                or lease.idle_only != spec.idle_only
                 or lease.state != "reserved"
                 or lease.request_id != peer_request_id(identity.worker_id, spec.request_id)
                 or lease.expires_at <= time.time()

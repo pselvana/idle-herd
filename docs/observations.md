@@ -1958,3 +1958,19 @@ Sign exact wire bytes: Pydantic and Python JSON can spell a small float differen
 to reject a valid grant, leaving it reserved until TTL. Returning the original
 signed bytes fixes the cause. Streaming authenticates its TLS certificate against
 the response signer before forwarding; a CA alone does not bind a particular worker.
+
+### 2026-11-01 — Phase 3 sensor authority and lease deadlines
+
+Activity scope matters as much as a numeric idle duration. Windows
+GetLastInputInfo describes only the calling session; a daemon cannot promote that
+reading to host-wide idle confidence. Phase 3 reports it as a diagnostic with
+unknown confidence, and explicitly configured utilization policy supports native
+headless hosts. Linux checks every enumerated logind session and rejects session
+churn; untrusted/missing/stale helper data never grants idle-only work.
+
+Waiting for native observations is another lease-expiry boundary. Review found
+that a short lease could expire during awaited resource/policy checks; consumption
+and idempotent grant return now recheck the deadline afterward. A delayed-sensor
+regression verifies the refusal. Sensor timeouts also cannot publish a late CPU
+baseline or start unbounded background resource workers. These are mocked/native
+process results, not physical sensor or real-model acceptance evidence.

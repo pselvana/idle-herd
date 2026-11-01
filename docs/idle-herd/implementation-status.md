@@ -1,5 +1,125 @@
 # Idle-Herd implementation status
 
+## Phase 3 — implemented native sensor interfaces and idle policy, November 1, 2026
+
+`idle-herd` now owns typed native host observations and worker-local eligibility
+policy independently of any UI. See [operation/configuration](phase-3.md).
+Earlier phase sections below remain historical records.
+
+- [x] Typed `IdleSignal`, sensor protocol and `EligibilityDecision` with activity,
+  source, confidence, freshness, eligibility and refusal reason kept distinct.
+- [x] macOS IOHID idle/kernel memory pressure, Linux logind session coverage,
+  Windows session-scoped native diagnostics, portable CPU/memory/battery and
+  available Linux/Windows temperature readings. Unsupported values stay unknown.
+- [x] Trusted absolute-path executable helper option with strict versioned JSON,
+  timestamp validation, duplicate/size/time bounds and subprocess cleanup.
+- [x] Static independent interactive/background policies: `always`, `idle_only`,
+  `utilization_only`, `manual`, `never`; conservative activity requirements and
+  explicit headless utilization policy. Manual refuses until Phase 6 controls.
+- [x] Immediate new-admission drain on activity, CPU recovery thresholds/dwell,
+  sample-gap recovery reset, memory pressure, battery/AC and known thermal limits.
+- [x] Durable workload/idle-only lease fields and migration; idempotency matching,
+  live checks at grant/consumption, deadline recheck after awaited checks. Peer
+  requests cannot claim interactive policy. Stricter local headers cannot weaken
+  the stored policy.
+- [x] Daemon sampling and revision/condition wakeups for local retry loops, plus
+  loopback read-only eligibility and policy-aware local capacity diagnostics.
+- [ ] Physical sensor, power/thermal, sleep/wake, real model/backend, Linux/Windows
+  native process and service-install acceptance. No bundled host-wide Windows helper.
+- [ ] Phase 4 public blocking waits/fairness and Phases 5–10 jobs, owner controls/UI,
+  sharing, optional administrative Raft and finally Docker/Compose.
+
+### Phase 3 evidence and limitations
+
+Unit/ASGI tests exercise unknown and partial Windows confidence, stale/future
+activity, failed/malformed helpers, multi-session Linux activity/churn, command
+timeout/output/cancellation, partial resource failure, pending sampling-worker
+bounds, first CPU sample, hysteresis, power/pressure/thermal rejection, stricter
+caller policy, idle recovery wakeups and sleep-gap recovery. A stalled read cannot
+publish a late CPU baseline or queue unlimited resource-sampling threads.
+
+Ledger and signed RPC tests show that prior idle capacity cannot grant work after
+the owner becomes active; a previously issued idle/background token is refused at
+consumption. Active work drains without cancellation and uncertain work remains
+quarantined. Policy fields persist and participate in idempotency; upgrading the
+Phase 2 schema preserves fences and orphan charges. Short leases that expire
+during policy checks cannot be consumed or returned as live idempotent grants.
+
+Native loopback process fixtures use fabricated models and synthetic sensor
+signals. The new N=1 headless case admits background inference under explicit
+utilization policy with unknown activity and refuses a stricter idle-only request.
+Existing N=1 crash/fencing, either N=2 survivor, each N=3 survivor, seed-loss,
+partition/rejoin, contention and origin-death tests remain regression checks.
+OpenAI/Ollama, Anthropic Messages and Responses compatibility tests remain intact.
+No central router/seed/quorum dependency, port change or global capacity/exactly-once
+claim was introduced; running work never becomes free from expiry or owner activity.
+
+Windows GetLastInputInfo is only a session diagnostic; confidence remains unknown
+even with a numeric duration. A trusted configured helper must establish host-wide
+coverage itself. Linux depends on accurate logind hints and stable enumeration;
+macOS lock/thermal and unsupported GPU/power measurements remain unknown. These
+are native interfaces with conservative limitations, not real hardware acceptance.
+Known bad resource readings deny even `always`; entirely unavailable sensors
+cannot establish those safeguards. `always` can still admit local interactive
+work subject to the separate live model/backend/memory fit check. Idle/utilization
+policies refuse when their required observations are unavailable.
+Direct peer dispatch requires both ends to support the Phase 3 workload grant
+contract; mixed Phase 2/3 versions may refuse remote work. Local ingress remains
+independent; protocol-version negotiation is not implemented here.
+
+An eligibility `draining` state does not implement the future owner mode API.
+No mode mutation, scoped control credentials, UI/service installer, public blocking
+wait, job recovery or sharing was added. Gherkin/OpenAPI future contracts remain
+specifications beyond the implemented subset. Raft and container tests do not
+apply in Phase 3. Next scoped phase: **Phase 4, blocking capacity and fairness**.
+
+### Phase 3 commands and results
+
+Host: macOS arm64, Python 3.14.2, existing core/dev environment. `uv` was absent
+from PATH, so initial commands returned `command not found`; direct `.venv/bin`
+equivalents were used, then the previously installed tool was located at
+`/private/tmp/idle-herd-phase0-tools/bin/uv`. `uv` commands below use that path,
+`UV_CACHE_DIR=/private/tmp/idle-herd-phase0-uv-cache`, and `--no-sync` to preserve
+the tested environment.
+
+| Command | Result |
+|---|---|
+| `.venv/bin/pytest tests/test_peer/test_policy.py -q --tb=short` | Exit 0: 34 passed in 0.53s |
+| `.venv/bin/pytest tests/test_peer/test_sensors.py -q` | Exit 0: 24 passed (adapter agent run) |
+| `.venv/bin/pytest tests/test_peer/test_policy_rpc.py tests/test_peer/test_rpc.py -q` | Exit 0: 14 passed (network agent run) |
+| `.venv/bin/pytest -q --tb=short` | Exit 0: 2136 passed, 3 skipped, 3 warnings in 73.75s; before final same-observation regressions |
+| `uv run --offline --no-sync pytest -q --tb=short` | Exit 0: **2138 passed, 3 skipped, 3 warnings in 74.40s**; 2141 collected |
+| `uv run --offline --no-sync ruff check src/` | Exit 0: all checks passed |
+| `uv run --offline --no-sync ruff format --check src/` | Exit 0: 97 files already formatted |
+| `.venv/bin/ruff check src/ tests/test_peer` | Exit 0: all checks passed |
+| `.venv/bin/ruff format --check src/ tests/test_peer` | Exit 0: 113 files already formatted |
+| `git diff --check` | Exit 0 |
+
+The initial sandbox peer suite had six native socket-bind failures (EPERM), with
+111 passing tests; native tests were rerun with approved loopback access. A later
+native headless test reached the correct refusal but expected the unwrapped error
+text; its assertion was corrected to the existing compatibility wrapper. No
+failing cases were skipped or removed. Inherited optional ONNX skips, queue
+coroutine warnings and fixture-loop deprecation remain; inherited telemetry
+schema tests can contact the internet. No dependency install, real model run,
+sensor hardware acceptance, fleet deployment, installer/soak, CVE audit, build,
+commit, push or publication was performed. Work stayed on `main`, with GPT-6.1
+Terra subagents and no worktrees.
+
+### Exact Phase 3 changed files
+
+Source: `src/fleet_manager/peer/app.py`, `backend.py`, `local_ledger.py`,
+`models.py`, `network.py`; added `policy.py`, `sensors.py` in that directory.
+
+Tests: `tests/test_peer/native_runner.py`, `network_runner.py`, `test_app.py`,
+`test_native.py`, `test_rpc.py`; added `conftest.py`, `test_policy.py`,
+`test_policy_rpc.py`, `test_sensors.py` in that directory.
+
+Documentation: `AGENTS.md`, `CLAUDE.md`, `IDLE-HERD_IMPLEMENTATION_PLAN.md`,
+`README.md`, `docs/idle-herd/adr-004-sensors-and-model-sharing.md`, `api.md`,
+`architecture.md`, `development.md`, `implementation-status.md`, `security.md`,
+added `docs/idle-herd/phase-3.md`, and appended `docs/issues.md`, `docs/observations.md`.
+
 ## Phase 2 — implemented authenticated peer dispatch, November 1, 2026
 
 `uv run idle-herd` remains a native daemon with localhost ingress and its own

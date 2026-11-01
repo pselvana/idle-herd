@@ -27,8 +27,10 @@ from fleet_manager.models.node import (
 from fleet_manager.models.request import RequestFormat, normalize_model_name
 from fleet_manager.peer.backend import AdmissionTransport, OllamaBackend, RequestBinding, binding
 from fleet_manager.peer.local_ledger import LocalLedger
-from fleet_manager.peer.models import AcquireRequest, AdmissionError, PeerSettings
-from fleet_manager.peer.network import OriginDispatch, PeerRPC
+from fleet_manager.peer.models import AcquireRequest, AdmissionError, PeerSettings, Workload
+from fleet_manager.peer.network import OriginDispatch, PeerRPC, trace_failure
+from fleet_manager.peer.policy import IdlePolicy
+from fleet_manager.peer.sensors import Sensor, native_sensor
 from fleet_manager.peer.stores import PeerLatencyStore, PeerTraceStore
 from fleet_manager.server.queue_manager import QueueManager
 from fleet_manager.server.registry import NodeRegistry
@@ -142,8 +144,9 @@ async def refresh_local(app: FastAPI):
 class LocalBoundary:
     """Loopback and browser-origin boundary; no administrative control API yet."""
 
-    def __init__(self, app):
+    def __init__(self, app, local):
         self.app = app
+        self.local = local
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -161,7 +164,16 @@ class LocalBoundary:
                 status_code=403, content={"error": {"type": "local_clients_only"}}
             )(scope, receive, send)
         token = headers.get(b"x-idle-herd-reservation")
-        marker = binding.set(RequestBinding(token=token))
+        workload = headers.get(b"x-idle-herd-workload", "interactive")
+        idle_only = headers.get(b"x-idle-herd-idle-only", "false")
+        if workload not in {"interactive", "background"} or idle_only not in {"true", "false"}:
+            await trace_failure(self.local, "invalid_workload_policy")
+            return await JSONResponse(
+                status_code=422, content={"error": {"type": "invalid_workload_policy"}}
+            )(scope, receive, send)
+        marker = binding.set(
+            RequestBinding(token=token, workload=workload, idle_only=idle_only == "true")
+        )
         try:
             await self.app(scope, receive, send)
         finally:
@@ -172,6 +184,7 @@ def create_peer_app(
     settings: PeerSettings | None = None,
     *,
     backend_transport: httpx.AsyncBaseTransport | None = None,
+    sensor: Sensor | None = None,
 ) -> FastAPI:
     settings = settings or PeerSettings()
 
@@ -180,7 +193,8 @@ def create_peer_app(
         async with AsyncExitStack() as stack:
             backend = OllamaBackend(settings, backend_transport)
             stack.push_async_callback(backend.close)
-            ledger = LocalLedger(settings, backend.can_run)
+            policy = IdlePolicy(settings, sensor or native_sensor(settings.sensor_helper))
+            ledger = LocalLedger(settings, backend.can_run, policy)
             await ledger.open()
             stack.push_async_callback(ledger.close)
             data_dir = str(Path(settings.data_dir).expanduser())
@@ -216,6 +230,7 @@ def create_peer_app(
             app.state.settings = server_settings
             app.state.backend = backend
             app.state.ledger = ledger
+            app.state.idle_policy = policy
             app.state.registry = registry
             app.state.latency_store = latency
             app.state.trace_store = traces
@@ -303,9 +318,13 @@ def create_peer_app(
                         registry.handle_drain(ledger.worker_id)
 
             task = asyncio.create_task(inventory_loop())
+            sensor_task = asyncio.create_task(policy.run())
             try:
                 yield
             finally:
+                sensor_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await sensor_task
                 if peer_task:
                     peer_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
@@ -316,7 +335,7 @@ def create_peer_app(
 
     app = FastAPI(title="Idle-Herd local peer", lifespan=lifespan)
     app.add_middleware(OriginDispatch, local=app)
-    app.add_middleware(LocalBoundary)
+    app.add_middleware(LocalBoundary, local=app)
 
     # Reuse every inference wire translator. No router lifecycle, mDNS,
     # heartbeat endpoint, remote registry writes, telemetry or preload work.
@@ -366,8 +385,12 @@ def create_peer_app(
         return JSONResponse(status_code=status, content={"error": str(exc)})
 
     @app.get("/v1/cluster/capacity")
-    async def capacity(model: str):
-        return await app.state.ledger.capacity(normalize_model_name(model))
+    async def capacity(model: str, workload: Workload = "interactive", idle_only: bool = False):
+        return await app.state.ledger.capacity(normalize_model_name(model), workload, idle_only)
+
+    @app.get("/v1/node/eligibility")
+    async def eligibility(workload: Workload = "background", idle_only: bool = False):
+        return await app.state.idle_policy.decision(workload, idle_only)
 
     @app.post("/v1/capacity/acquire")
     async def acquire(spec: AcquireRequest):

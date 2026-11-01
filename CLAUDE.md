@@ -7,7 +7,9 @@ persisted reconnection endpoints and worker-direct streaming to `uv run idle-her
 Every node retains independent localhost ingress and durable worker admission.
 See [Phase 2 operation/security](docs/idle-herd/phase-2.md) and
 [Phase 1 recovery](docs/idle-herd/phase-1.md). Uncertain execution remains charged;
-expiry never frees running work. Idle sensors, modes, UI and jobs remain future work.
+expiry never frees running work. [Phase 3](docs/idle-herd/phase-3.md) adds
+worker-local native sensor and idle policy checks. Owner mode controls, UI and
+jobs remain future work.
 The router/node commands and historical deployment notes below describe upstream.
 Follow the fork invariants in [AGENTS.md](AGENTS.md) and
 [implementation status](docs/idle-herd/implementation-status.md) before continuing.

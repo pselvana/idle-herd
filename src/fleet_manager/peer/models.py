@@ -1,13 +1,17 @@
-"""Phase 1 local worker contracts (cluster-wide waits arrive in Phase 4)."""
+"""Local worker contracts (cluster-wide waits arrive in Phase 4)."""
 
 from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from fleet_manager.models.request import normalize_model_name
+from fleet_manager.peer.sensors import IdleSignal
+
+Workload = Literal["interactive", "background"]
+IdleMode = Literal["always", "idle_only", "utilization_only", "manual", "never"]
 
 
 class PeerSettings(BaseSettings):
@@ -21,6 +25,31 @@ class PeerSettings(BaseSettings):
     weight_multiplier: float = Field(default=1.2, ge=1)
     request_memory_gb: float = Field(default=1, gt=0)
     reserve_memory_gb: float = Field(default=2, ge=0)
+    interactive_policy: IdleMode = "always"
+    background_policy: IdleMode = "idle_only"
+    idle_seconds: float = Field(default=120, ge=0, le=86400)
+    idle_hysteresis_seconds: float = Field(default=15, ge=0, le=3600)
+    cpu_busy_percent: float = Field(default=25, gt=0, le=100)
+    cpu_idle_percent: float = Field(default=20, ge=0, le=100)
+    gpu_busy_percent: float = Field(default=25, gt=0, le=100)
+    battery_floor_percent: float = Field(default=30, ge=0, le=100)
+    require_ac: bool = False
+    sensor_max_age: float = Field(default=5, ge=0.1, le=60)
+    sensor_interval: float = Field(default=2, ge=0.1, le=30)
+    sensor_helper: str | None = None
+
+    @model_validator(mode="after")
+    def sensor_thresholds(self):
+        from pathlib import Path
+
+        if self.cpu_idle_percent > self.cpu_busy_percent:
+            raise ValueError("cpu_idle_percent must not exceed cpu_busy_percent")
+        if self.sensor_interval >= self.sensor_max_age:
+            raise ValueError("sensor_interval must be less than sensor_max_age")
+        if self.sensor_helper is not None and not Path(self.sensor_helper).is_absolute():
+            raise ValueError("sensor_helper must be an absolute executable path")
+        return self
+
     # Peer transport is opt-in and uses an explicitly allocated, separate port.
     peer_endpoint: str | None = None
     seeds: list[str] = Field(default_factory=list, max_length=128)
@@ -83,6 +112,8 @@ class AcquireRequest(BaseModel):
     ttl_ms: int = Field(default=30000, ge=100, le=120000)
     slots: Literal[1] = 1
     wait_ms: Literal[0] = 0
+    workload: Workload = "interactive"
+    idle_only: bool = False
 
     @field_validator("model")
     @classmethod
@@ -112,6 +143,19 @@ class Lease(BaseModel):
     ttl_ms: int
     state: Literal["reserved", "running", "released", "expired", "quarantined"]
     memory_gb: float
+    workload: Workload = "interactive"
+    idle_only: bool = False
+
+
+class EligibilityDecision(BaseModel):
+    workload: Workload
+    policy: IdleMode
+    eligible: bool
+    reason: str | None = None
+    state: Literal["eligible", "draining", "ineligible", "unknown"]
+    activity: Literal["idle", "active", "unknown"]
+    signal: IdleSignal
+    observed_at: float
 
 
 class Capacity(BaseModel):
@@ -128,6 +172,7 @@ class Capacity(BaseModel):
     eligible: bool
     reason: str | None = None
     observed_at: float
+    eligibility: EligibilityDecision | None = None
 
 
 class AdmissionError(Exception):

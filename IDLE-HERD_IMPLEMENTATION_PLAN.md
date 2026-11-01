@@ -1,14 +1,14 @@
 # Idle-Herd — Implementation Plan
 
-> **Status:** Phase 0 design/audit and Phase 1 single-node runtime implemented.
-> `idle-herd` runs local ingress with durable worker admission; legacy commands
-> retain upstream behavior. Phases 2–10 remain unimplemented. See
+> **Status:** Phases 0–3 implement design/audit, single-node admission, opt-in
+> peer dispatch and worker-local idle policy. Legacy commands retain upstream
+> behavior. Phases 4–10 remain future work. See
 > [verification and remaining risks](docs/idle-herd/implementation-status.md).
 > **Prepared:** November 1, 2026  
 > **Primary development environment:** Visual Studio Code + OpenAI Codex IDE extension  
 > **Target:** Cross-platform, peer-to-peer, idle-aware independent LLM inference; no dedicated inference router; **fully functional with 1, 2, or 3+ intermittently connected nodes and no guaranteed Raft quorum**.
-> **Revision:** 5 — adds single-node worker leases, native mock crash evidence and
-> explicit conservative recovery limits; preserves native-first sequencing.
+> **Revision:** 7 — records Phase 3 worker-local native sensor and idle policy
+> implementation and its verification limits.
 
 This file, `IDLE-HERD_IMPLEMENTATION_PLAN.md`, is the canonical implementation plan.
 The architecture below describes the target system; completed design work does not
@@ -768,7 +768,7 @@ validation passed. Five inherited tests fetch a public telemetry schema; the
 suite is not entirely offline. No live inference, Linux/Windows native lifecycle
 or future peer guarantees were verified. Full commands, initial sandbox failures
 and limitations are in [implementation status](docs/idle-herd/implementation-status.md).
-Phase 1 implementation is recorded below; Phases 2–10 remain pending.
+Subsequent phase implementation is recorded below.
 
 ### Phase 1 — Production-capable **single-node mode**
 
@@ -805,10 +805,15 @@ real models or Linux/Windows hosts.
 
 ### Phase 3 — Idle-awareness on each OS
 
-- [ ] Define typed `IdleSignal`/`EligibilityDecision`; local policy controls all admission.
-- [ ] Add macOS native helper option, Linux resource/desktop signals where accessible, Windows native helper option, and `utilization_only` fallback for headless/native servers; defer Docker sensor integration to Phase 10.
-- [ ] Add user-activity drain, hysteresis, memory pressure, power/thermal safeguards and policies for interactive versus background requests.
-- [ ] Test `unknown` policy and host helper failure; avoid treating a container's own CPU statistics as the host user's activity.
+- [x] Define typed `IdleSignal`/`EligibilityDecision`; local policy controls all admission.
+- [x] Add native activity/resource adapters and trusted helper option, and explicit `utilization_only` policy for headless/native servers; defer Docker sensor integration to Phase 10.
+- [x] Add user-activity drain, hysteresis, memory pressure, power/thermal safeguards and policies for interactive versus background requests.
+- [x] Test `unknown` policy and host helper failure; avoid treating a container's own CPU statistics as the host user's activity.
+
+**Implementation:** [Phase 3 runtime and limitations](docs/idle-herd/phase-3.md).
+The local change hook wakes retry loops; public blocking waits and fairness remain
+Phase 4. Native hardware sensor behavior remains unverified; see
+[implementation status](docs/idle-herd/implementation-status.md) for evidence.
 
 **Acceptance:** A worker becoming busy declines new background work regardless of any peer's stale snapshot. A return to idle wakes waiting requesters. One node remains functional without desktop sensors when explicitly configured for utilization-based mode.
 
@@ -1132,8 +1137,8 @@ Idle-Herd guarantees only the following conditional property: **when at least on
 
 ## 13. References and verification notes
 
-**This document is the implementation specification and Phase 0 progress record.**
-Only the Phase 0/1 results explicitly linked above are verified; the remaining
+**This document is the implementation specification and phase progress record.**
+Only the results explicitly linked above are verified; the remaining
 architecture and milestones describe future work. Consult the pinned-checkout
 audit and implementation status for actual source locations, test evidence and
 limitations rather than treating roadmap guarantees as implemented behavior.
@@ -1150,12 +1155,10 @@ limitations rather than treating roadmap guarantees as implemented behavior.
 - OpenAI Codex VS Code extension: https://marketplace.visualstudio.com/items?itemName=OpenAI.chatgpt
 - Codex IDE workflow: https://learn.chatgpt.com/docs/codex/ide
 
-**Revision:** November 1, 2026 (v6). Records Phase 0 design/baseline and Phase 1
-single-node ingress, durable worker leases and native mock crash tests. Phase 1
-hardware acceptance and the documented recovery/fit limits remain explicit.
-Phase 2 now implements authenticated enrollment, peer exchange and direct worker
-streaming, with native mock survivor/partition tests. Phases 3–10 remain
-unimplemented; optional Raft stays outside inference and
+**Revision:** November 1, 2026 (v7). Records Phase 0–3 implementation,
+including worker-local idle policy and native sensor interfaces. Hardware sensor
+and backend acceptance and documented recovery/fit limits remain explicit.
+Phases 4–10 remain future work; optional Raft stays outside inference and
 Docker/Compose stays in Phase 10. Any upstream guidance suggesting an always-on
 router or mandatory Raft must be interpreted using current §§0–4, 8–9, 11–12.
 

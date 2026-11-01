@@ -14,12 +14,20 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from fleet_manager.models.request import normalize_model_name
 from fleet_manager.peer.local_ledger import LocalLedger
-from fleet_manager.peer.models import AcquireRequest, AdmissionError, PeerSettings, ResourceFit
+from fleet_manager.peer.models import (
+    AcquireRequest,
+    AdmissionError,
+    PeerSettings,
+    ResourceFit,
+    Workload,
+)
 
 
 class RequestBinding(BaseModel):
     token: str | None = None
     request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    workload: Workload = "interactive"
+    idle_only: bool = False
 
 
 binding: ContextVar[RequestBinding | None] = ContextVar("peer_request", default=None)
@@ -165,10 +173,17 @@ class AdmissionTransport(httpx.AsyncBaseTransport):
             token = current.token
             if token is None:
                 lease = await self.ledger.acquire(
-                    AcquireRequest(model=model, request_id=current.request_id)
+                    AcquireRequest(
+                        model=model,
+                        request_id=current.request_id,
+                        workload=current.workload,
+                        idle_only=current.idle_only,
+                    )
                 )
                 token = lease.token
-            await self.ledger.consume(token, model)
+            await self.ledger.consume(
+                token, model, workload=current.workload, idle_only=current.idle_only
+            )
         except AdmissionError as exc:
             return httpx.Response(
                 exc.status,

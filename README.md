@@ -1,6 +1,6 @@
 # Idle-Herd
 
-This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 2**.
+This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 3**.
 `uv run idle-herd` starts single-node localhost ingress and durable worker-owned
 slot reservations in one process. Opt-in authenticated peer discovery and direct
 streaming need no leader or live seed; Raft is absent. It uses a
@@ -12,8 +12,14 @@ See [implementation status and verification](docs/idle-herd/implementation-statu
 [native development/build/test instructions](docs/idle-herd/development.md).
 See [Phase 1 APIs, configuration and crash recovery](docs/idle-herd/phase-1.md).
 See [Phase 2 enrollment and peer operation](docs/idle-herd/phase-2.md).
-Idle policy, mode controls, jobs, sharing and the macOS companion remain future phases. Native socket tests use a mock model backend;
-real Ollama/hardware inference has not been verified by this implementation.
+See [Phase 3 native sensors and idle policy](docs/idle-herd/phase-3.md). Peer work
+uses background policy (`idle_only` by default); unknown activity refuses idle-only
+admission. Native headless owners may explicitly configure
+`IDLE_HERD_BACKGROUND_POLICY=utilization_only`. Windows session activity is
+diagnostic only unless a trusted host-wide helper is configured.
+Mode controls, jobs, sharing and the macOS companion remain future phases.
+Native socket tests use a mock model backend; real hardware sensors and
+Ollama/hardware inference have not been verified by this implementation.
 
 The target contract is conditional: any reachable survivor with an eligible compatible
 local backend and healthy storage/resources can execute local work without peers or

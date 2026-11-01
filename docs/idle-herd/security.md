@@ -1,4 +1,4 @@
-# Security boundary: Phases 1–2 and target design
+# Security boundary: Phases 1–3 and target design
 
 The table below is the target threat model. Phase 1 `idle-herd` binds ingress to
 127.0.0.1, rejects non-loopback clients, unexpected Host and browser Origin/cross-site
@@ -11,6 +11,15 @@ separate TLS listener with signed, replay-fenced RPC, CA enrollment and eventual
 authority-signed revocation. It exposes only exchange/acquire/execute/release;
 local-only routes remain inaccessible on that listener. See
 [Phase 2 security and operating limits](phase-2.md).
+Phase 3 enforces the worker's background policy on every peer reservation and
+rechecks persisted policy before execution; peer-supplied workload labels cannot
+override it. The optional host activity helper is a trusted local executable,
+configured by absolute path and launched without a shell. Its versioned bounded
+JSON must attest host-wide activity, not only its own session. Permissions must
+protect the executable and its parent directories against untrusted replacement.
+Unknown/stale activity cannot grant idle-only work. Read-only eligibility exposes
+aggregate observations, never input events or session identifiers. See
+[Phase 3 limitations](phase-3.md).
 See [Phase 1](phase-1.md); Phase 6's authenticated owner API remains required.
 [The audit](upstream-audit.md) records inherited unauthenticated
 routes, wildcard binds and external telemetry. Do not expose that runtime as an

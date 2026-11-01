@@ -295,7 +295,7 @@ async def test_unknown_models_and_deferred_waits_fail_explicitly(tmp_path, monke
         )
         assert response.status_code == 404
         assert response.json()["error"]["type"] == "not_installed"
-        for extra in ({"wait_ms": 1}, {"slots": 2}, {"idle_only": True}):
+        for extra in ({"wait_ms": 1}, {"slots": 2}):
             response = await client.post(
                 "/v1/capacity/acquire",
                 json={
@@ -305,6 +305,12 @@ async def test_unknown_models_and_deferred_waits_fail_explicitly(tmp_path, monke
                 },
             )
             assert response.status_code == 422
+        response = await client.post(
+            "/v1/capacity/acquire",
+            json={"model": "tiny", "request_id": "idle", "idle_only": True},
+        )
+        assert response.status_code == 503
+        assert response.json()["error"]["type"] == "activity_unknown"
 
 
 async def test_shutdown_drains_traces_and_latency_without_database_races(

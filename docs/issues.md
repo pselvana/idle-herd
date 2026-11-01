@@ -3743,3 +3743,27 @@ Phase 2 limits: private literal-IP discovery only, bounded retained peer cache,
 eventual revocation, and no automatic retry after uncertain execution. See
 `docs/idle-herd/phase-2.md`. Real model/OS service and Linux/Windows integration
 remain unverified; idle policy, waits, jobs, UI and model transfer are later phases.
+
+### OPEN — Phase 3 native sensor coverage and hardware acceptance (2026-11-01)
+
+**Severity: medium; conservative availability limitation.** Windows native input
+idle is session-scoped and remains diagnostic/unknown; no bundled host-wide
+Windows helper exists. Linux logind hints depend on session software; macOS
+IOHID does not report lock or thermal state here. Unknown human activity refuses
+idle-only work. An owner can explicitly select utilization-only policy for a
+native headless host, or configure a trusted versioned host-wide helper.
+
+Mock tests validate parsers, failure handling, policy, fencing and survivor
+behavior. They do not validate real macOS/Linux/Windows activity, power, thermal,
+sleep/wake, services or physical backend contention. Proposed follow-up: validate
+native sensor permissions/session coverage on real hosts and add evidence before
+claiming that support verified. Preserve unknown readings where measurement is
+unsupported. See [Phase 3 operation/limits](idle-herd/phase-3.md).
+
+### FIXED — Phase 3 lease deadline recheck after sensor waits (2026-11-01)
+
+Awaited fit and host policy checks could outlast a short reservation. Consumption
+now rechecks expiry immediately before changing to running, and idempotent acquire
+rechecks before returning its grant. Delayed-sensor regressions deny both paths;
+no expired lease authorizes backend dispatch. Running/quarantined leases remain
+charged independently of expiry.

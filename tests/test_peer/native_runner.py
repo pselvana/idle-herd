@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+import time
 
 import uvicorn
 from fastapi import FastAPI
@@ -10,6 +11,14 @@ from fastapi.responses import StreamingResponse
 
 from fleet_manager.peer.app import create_peer_app
 from fleet_manager.peer.models import PeerSettings
+from fleet_manager.peer.sensors import IdleSignal
+
+
+class HealthySensor:
+    async def sample(self):
+        return IdleSignal(
+            observed_at=time.time(), source="test", memory_available_gb=48, cpu_percent=1
+        )
 
 
 def mock_backend():
@@ -96,7 +105,14 @@ async def main():
                 backend_url=sys.argv[3],
                 request_memory_gb=0.000001,
                 reserve_memory_gb=0,
-            )
+                background_policy=(
+                    "utilization_only"
+                    if len(sys.argv) > 4 and sys.argv[4] == "headless"
+                    else "idle_only"
+                ),
+                idle_hysteresis_seconds=0,
+            ),
+            sensor=HealthySensor(),
         )
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
     serving = asyncio.create_task(server.serve())

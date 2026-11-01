@@ -1,4 +1,4 @@
-# Idle-Herd architecture: Phase 2 and target design
+# Idle-Herd architecture: Phase 3 and target design
 
 **Current runtime:** `idle-herd` combines localhost ingress, local Ollama inventory,
 and durable worker admission in one native process. Phase 2 adds a separately
@@ -10,6 +10,13 @@ wire translators and worker fencing serve both kinds of requests. See
 [Phase 2](phase-2.md), [Phase 1 recovery](phase-1.md) and
 [verification](implementation-status.md). Remaining sections describe future phases
 where they go beyond these implementations. Legacy commands retain upstream behavior.
+
+[Phase 3](phase-3.md) adds daemon-owned native observations and live worker-local
+policy checks before granting and consuming durable leases. Interactive localhost
+work defaults to `always`; peer work always uses the worker's background policy,
+defaulting to `idle_only`. Unknown activity cannot grant idle-only work. Explicit
+`utilization_only` supports native headless hosts. An eligibility transition drains
+new admissions without cancelling or freeing running/quarantined execution.
 
 The target is a symmetric native peer: every peer has local ingress, an origin scheduler and journal, worker-local admission, backend adapters, authenticated discovery and host sensors. A peer may be ingress-only if its backend or policy is ineligible. The origin ranks candidates from a freshness-labeled peer view, asks a worker directly for admission, then dispatches using that worker's token. The worker owns its ledger and checks current resources and policy. Jobs, membership, model inventory, lease ledger and optional administrative consensus have distinct authorities; gossip cannot allocate resources. See the ADRs in this directory and the planned API contract in [api.md](api.md).
 

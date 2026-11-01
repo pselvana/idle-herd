@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+import time
 
 import uvicorn
 from fastapi import FastAPI
@@ -105,18 +106,24 @@ async def serve_peer(directory, backend, port, seeds):
 
     from fleet_manager.peer.app import create_peer_app, create_peer_rpc_app
     from fleet_manager.peer.models import PeerSettings
+    from fleet_manager.peer.sensors import IdleSignal
+
+    class HealthySensor:
+        async def sample(self):
+            return IdleSignal(observed_at=time.time(), source="test", memory_available_gb=48)
 
     settings = PeerSettings(
         data_dir=directory,
         backend_url=backend,
         request_memory_gb=0.000001,
+        background_policy="always",
         reserve_memory_gb=0,
         peer_endpoint=f"https://127.0.0.1:{port}",
         seeds=seeds,
         peer_interval=0.2,
         peer_ttl=1,
     )
-    app = create_peer_app(settings)
+    app = create_peer_app(settings, sensor=HealthySensor())
     blocked = set()
 
     @app.post("/test/block-peers")

@@ -19,16 +19,22 @@ from fleet_manager.peer.models import (
     Lease,
     PeerSettings,
     ResourceFit,
+    Workload,
 )
+from fleet_manager.peer.policy import IdlePolicy
+from fleet_manager.peer.sensors import native_sensor
 
 FitCheck = Callable[[str], Awaitable[ResourceFit]]
 OCCUPIED = "('reserved','running','quarantined')"
 
 
 class LocalLedger:
-    def __init__(self, settings: PeerSettings, fit_check: FitCheck):
+    def __init__(
+        self, settings: PeerSettings, fit_check: FitCheck, policy: IdlePolicy | None = None
+    ):
         self.settings = settings
         self.fit_check = fit_check
+        self.policy = policy or IdlePolicy(settings, native_sensor(settings.sensor_helper))
         self._lock = asyncio.Lock()
         self._db: aiosqlite.Connection | None = None
         self._owner: aiosqlite.Connection | None = None
@@ -70,6 +76,20 @@ class LocalLedger:
                 CREATE TABLE IF NOT EXISTS peer_nonces (
                     nonce TEXT PRIMARY KEY, expires_at REAL NOT NULL);
             """)
+            # Upgrade Phase 1/2 ledgers without changing fences or execution state.
+            columns = {
+                row["name"]
+                for row in await (await self._db.execute("PRAGMA table_info(leases)")).fetchall()
+            }
+            if "workload" not in columns:
+                await self._db.execute(
+                    "ALTER TABLE leases ADD COLUMN workload TEXT NOT NULL DEFAULT 'interactive'"
+                )
+            if "idle_only" not in columns:
+                await self._db.execute(
+                    "ALTER TABLE leases ADD COLUMN idle_only INTEGER NOT NULL DEFAULT 0"
+                )
+            await self._db.commit()
             async with self._transaction():
                 await self._db.execute(
                     "INSERT OR IGNORE INTO identity VALUES (1,?,?)",
@@ -160,9 +180,17 @@ class LocalLedger:
             ).fetchone()
             if row:
                 lease = Lease(**dict(row))
-                if lease.model != spec.model or lease.ttl_ms != spec.ttl_ms:
+                if (
+                    lease.model != spec.model
+                    or lease.ttl_ms != spec.ttl_ms
+                    or lease.workload != spec.workload
+                    or lease.idle_only != spec.idle_only
+                ):
                     raise AdmissionError("idempotency_conflict")
                 if lease.worker_incarnation == self.incarnation and lease.state == "reserved":
+                    await self.policy.require(lease.workload, lease.idle_only)
+                    if lease.expires_at <= time.time():
+                        raise AdmissionError("reservation_not_active")
                     return lease
                 raise AdmissionError("request_already_used")
             fit = await self.fit_check(spec.model)
@@ -175,6 +203,8 @@ class LocalLedger:
                 raise AdmissionError("busy", 429)
             if sum(item.memory_gb for item in occupied) + fit.required_gb > fit.available_gb:
                 raise AdmissionError("insufficient_memory", 503)
+            # Sample after backend probes, immediately before the durable grant.
+            await self.policy.require(spec.workload, spec.idle_only)
             taken = {item.slot_id for item in occupied}
             slot = next(i for i in range(self.settings.slots) if i not in taken)
             await self._db.execute("INSERT OR IGNORE INTO slots VALUES (?,0)", (slot,))
@@ -198,6 +228,8 @@ class LocalLedger:
                 ttl_ms=spec.ttl_ms,
                 state="reserved",
                 memory_gb=fit.required_gb,
+                workload=spec.workload,
+                idle_only=spec.idle_only,
             )
             fields = lease.model_dump()
             await self._db.execute(
@@ -224,7 +256,14 @@ class LocalLedger:
             raise AdmissionError("stale_generation")
         return lease
 
-    async def consume(self, token: str, model: str) -> Lease:
+    async def consume(
+        self,
+        token: str,
+        model: str,
+        *,
+        workload: Workload | None = None,
+        idle_only: bool = False,
+    ) -> Lease:
         async with self._transaction():
             await self._expire()
             lease = await self._authenticate(token)
@@ -240,6 +279,21 @@ class LocalLedger:
                 fit.available_gb
             ):
                 raise AdmissionError("insufficient_memory", 503)
+            additional = (
+                "background"
+                if workload == "background" and lease.workload != "background"
+                else lease.workload
+                if idle_only and not lease.idle_only
+                else None
+            )
+            await self.policy.require(
+                lease.workload,
+                lease.idle_only,
+                additional_workload=additional,
+                additional_idle_only=idle_only,
+            )
+            if lease.expires_at <= time.time():
+                raise AdmissionError("reservation_not_active")
             await self._db.execute(
                 "UPDATE leases SET memory_gb=? WHERE reservation_id=?",
                 (required, lease.reservation_id),
@@ -277,7 +331,9 @@ class LocalLedger:
                 raise AdmissionError("execution_not_running")
             await self._event(lease, "released" if stopped else "quarantined")
 
-    async def capacity(self, model: str) -> Capacity:
+    async def capacity(
+        self, model: str, workload: Workload = "interactive", idle_only: bool = False
+    ) -> Capacity:
         async with self._transaction():
             await self._expire()
             occupied = await self._occupied()
@@ -288,6 +344,9 @@ class LocalLedger:
                 memory_slots = max(0, int(remaining_gb / fit.required_gb))
             except AdmissionError as exc:
                 reason, memory_slots = exc.reason, 0
+            decision = await self.policy.decision(workload, idle_only)
+            if not decision.eligible:
+                reason, memory_slots = reason or decision.reason, 0
             available = max(
                 0,
                 min(
@@ -307,6 +366,7 @@ class LocalLedger:
                 eligible=reason is None,
                 reason=reason,
                 observed_at=time.time(),
+                eligibility=decision,
             )
 
     async def reconcile_stopped_backend(self):

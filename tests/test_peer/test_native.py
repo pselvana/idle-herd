@@ -192,10 +192,17 @@ async def test_native_crash_after_commit_before_origin_receives_reply(tmp_path):
 import asyncio, os, sys
 from fleet_manager.peer.local_ledger import LocalLedger
 from fleet_manager.peer.models import PeerSettings, ResourceFit, AcquireRequest
+from fleet_manager.peer.policy import IdlePolicy
+from fleet_manager.peer.sensors import IdleSignal
+class Sensor:
+    async def sample(self):
+        import time
+        return IdleSignal(observed_at=time.time(), source="test", memory_available_gb=48)
 async def fit(model):
     return ResourceFit(model=model, required_gb=1, available_gb=100)
 async def run():
-    ledger = LocalLedger(PeerSettings(data_dir=sys.argv[1]), fit)
+    settings = PeerSettings(data_dir=sys.argv[1])
+    ledger = LocalLedger(settings, fit, IdlePolicy(settings, Sensor()))
     await ledger.open()
     lease = await ledger.acquire(AcquireRequest(model="tiny", request_id="lost"))
     print(lease.model_dump_json(), flush=True)
@@ -227,3 +234,27 @@ asyncio.run(run())
         assert lease.slot_generation > lost["slot_generation"]
     finally:
         await worker.close()
+
+
+async def test_native_headless_background_without_activity_helper_or_peers(tmp_path):
+    async with (
+        httpx.AsyncClient(trust_env=False, timeout=5) as client,
+        native(tmp_path, "backend") as (_, backend_url),
+        native(tmp_path, "peer", tmp_path / "worker", backend_url, "headless") as (_, peer_url),
+    ):
+        status = (await client.get(peer_url + "/v1/node/eligibility")).json()
+        assert status["eligible"] and status["activity"] == "unknown"
+        assert status["policy"] == "utilization_only"
+        response = await client.post(
+            peer_url + "/api/embed",
+            headers={"X-Idle-Herd-Workload": "background"},
+            json={"model": "tiny", "input": "hi"},
+        )
+        assert response.status_code == 200, response.text
+        response = await client.post(
+            peer_url + "/api/embed",
+            headers={"X-Idle-Herd-Workload": "background", "X-Idle-Herd-Idle-Only": "true"},
+            json={"model": "tiny", "input": "hi"},
+        )
+        assert response.status_code == 503, response.text
+        assert "activity_unknown" in response.json()["error"]
