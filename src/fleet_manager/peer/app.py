@@ -1,4 +1,4 @@
-"""Native single-process ingress + local inventory + durable worker authority."""
+"""Native local ingress and durable worker authority, with opt-in authenticated peers."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from fleet_manager.models.request import RequestFormat, normalize_model_name
 from fleet_manager.peer.backend import AdmissionTransport, OllamaBackend, RequestBinding, binding
 from fleet_manager.peer.local_ledger import LocalLedger
 from fleet_manager.peer.models import AcquireRequest, AdmissionError, PeerSettings
+from fleet_manager.peer.network import OriginDispatch, PeerRPC
 from fleet_manager.peer.stores import PeerLatencyStore, PeerTraceStore
 from fleet_manager.server.queue_manager import QueueManager
 from fleet_manager.server.registry import NodeRegistry
@@ -46,7 +47,7 @@ class LocalStreamingProxy(StreamingProxy):
 
     def _get_client(self, node_id):
         if node_id != self.ledger.worker_id:
-            raise ValueError("Phase 1 can execute only on its own worker")
+            raise ValueError("Worker execution must use its own local backend")
         if node_id not in self._clients:
             self._clients[node_id] = httpx.AsyncClient(
                 base_url=self.ledger.settings.backend_url,
@@ -224,7 +225,73 @@ def create_peer_app(
             app.state.scorer = ScoringEngine(server_settings, registry, latency, sessions)
             app.state.mlx_proxy = None
             app.state.context_compactor = None
+            app.state.identity = None
+            app.state.directory = None
+            app.state.peer_error = None
+            app.state.peer_task = None
             await refresh_local(app)
+
+            peer_task = None
+            if settings.peer_endpoint:
+                from fleet_manager.peer.discovery import (
+                    ModelCapability,
+                    PeerDescriptor,
+                    PeerDirectory,
+                )
+                from fleet_manager.peer.identity import IdentityError, PeerIdentity
+
+                try:
+                    identity = await PeerIdentity.open(
+                        data_dir, ledger.worker_id, ledger.cluster_id
+                    )
+
+                    async def advertised_inventory():
+                        try:
+                            tags, _ = await backend.inventory()
+                            models = [
+                                ModelCapability(
+                                    name=normalize_model_name(m.name), capabilities=m.capabilities
+                                )
+                                for m in tags.models[:256]
+                            ]
+                        except AdmissionError:
+                            models = []
+                        return PeerDescriptor(
+                            cluster_id=ledger.cluster_id,
+                            worker_id=ledger.worker_id,
+                            incarnation=ledger.incarnation,
+                            endpoint=settings.peer_endpoint,
+                            models=models,
+                        )
+
+                    directory = await asyncio.to_thread(
+                        PeerDirectory,
+                        identity,
+                        settings.peer_endpoint,
+                        settings.seeds,
+                        advertised_inventory,
+                        data_dir,
+                        ttl=settings.peer_ttl,
+                        interval=settings.peer_interval,
+                    )
+                    stack.push_async_callback(directory.close)
+                    await directory.open()
+                    app.state.identity = identity
+                    app.state.directory = directory
+                    app.state.peer_client = httpx.AsyncClient(
+                        verify=await asyncio.to_thread(identity.client_ssl_context),
+                        trust_env=False,
+                        follow_redirects=False,
+                        timeout=httpx.Timeout(600, connect=2),
+                    )
+                    stack.push_async_callback(app.state.peer_client.aclose)
+                    peer_task = asyncio.create_task(directory.run())
+                    app.state.peer_task = peer_task
+                except (IdentityError, OSError, ValueError) as exc:
+                    # Enrollment/credential failures withdraw participation while
+                    # preserving eligible local inference without any peer call.
+                    app.state.peer_error = str(exc)
+                    logger.error("Peer transport unavailable: %s", exc)
 
             async def inventory_loop():
                 while True:
@@ -239,11 +306,16 @@ def create_peer_app(
             try:
                 yield
             finally:
+                if peer_task:
+                    peer_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await peer_task
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
 
     app = FastAPI(title="Idle-Herd local peer", lifespan=lifespan)
+    app.add_middleware(OriginDispatch, local=app)
     app.add_middleware(LocalBoundary)
 
     # Reuse every inference wire translator. No router lifecycle, mDNS,
@@ -319,6 +391,24 @@ def create_peer_app(
 
     @app.get("/health")
     async def health():
-        return {"worker_id": app.state.ledger.worker_id, "discovery": "disabled", "quorum": None}
+        return {
+            "worker_id": app.state.ledger.worker_id,
+            "discovery": "peer_to_peer" if app.state.directory else "disabled",
+            "peer_error": app.state.peer_error,
+            "quorum": None,
+        }
+
+    @app.get("/v1/cluster/peers")
+    async def peers():
+        return {
+            "scope": "local_peer_view",
+            "globally_authoritative": False,
+            "peers": app.state.directory.snapshot() if app.state.directory else [],
+        }
 
     return app
+
+
+def create_peer_rpc_app(local_app):
+    """Serve only on a separately configured TLS listener after local startup."""
+    return PeerRPC(local_app)

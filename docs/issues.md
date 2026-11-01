@@ -3723,3 +3723,23 @@ limitations; full details/evidence are in [Phase 1 status](idle-herd/implementat
 previously synthesized success; they now return 502 like other surfaces. New
 peer shutdown also drains inherited asynchronous trace/latency writes before
 closing their databases. Tests cover both regressions without a live model.
+
+### FIXED — Phase 2 signed lease serialization and optional-listener lifetime (2026-11-01)
+
+Native TLS tests caught signature verification failing when a signed Pydantic lease
+was re-serialized through JSONResponse with different exponent spelling. Peer RPC
+now returns the exact signed bytes; the RPC regression uses a small memory allowance.
+An independent review also found optional peer-listener failure could shut down
+localhost ingress. The CLI isolates optional bind failure and signal ownership;
+a regression keeps localhost running after simulated uvicorn SystemExit.
+
+Fenced backend accounting now reconstructs inner responses so eagerly buffered
+transports cannot bypass the accounting stream. Buffered, streamed-incomplete and
+disconnected backend responses all retain quarantine. Origin cleanup no longer
+inspects a completed token after its slot may have advanced to another generation;
+atomic unconsumed-only cleanup preserves both reused and still-running slots.
+
+Phase 2 limits: private literal-IP discovery only, bounded retained peer cache,
+eventual revocation, and no automatic retry after uncertain execution. See
+`docs/idle-herd/phase-2.md`. Real model/OS service and Linux/Windows integration
+remain unverified; idle policy, waits, jobs, UI and model transfer are later phases.

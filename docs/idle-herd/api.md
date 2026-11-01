@@ -1,4 +1,4 @@
-# Idle-Herd API contract — roadmap and Phase 1 subset
+# Idle-Herd API contract — roadmap and Phases 1–2 subset
 
 [openapi.yaml](openapi.yaml) remains the OpenAPI 3.1 **future** cluster/control
 contract. Phase 1 implements a deliberately smaller local-only capacity/acquire/
@@ -7,6 +7,9 @@ inspect/release API, documented with its actual fields, statuses and security in
 do not validate its responses against the future YAML or assume Phase 4 waits,
 Phase 6 control scopes, modes, or events exist. Existing inference translators are
 reused; legacy `herd` still registers its upstream dashboard/fleet routes.
+Phase 2 adds separate signed TLS peer RPC and local peer diagnostics; see
+[Phase 2](phase-2.md). Public capacity/acquire remain worker-local and nonblocking.
+The sections below describe the future contract where they exceed those subsets.
 
 ## Trust and visibility
 

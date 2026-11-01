@@ -1,4 +1,4 @@
-# Security boundary: Phase 1 subset and target design
+# Security boundary: Phases 1–2 and target design
 
 The table below is the target threat model. Phase 1 `idle-herd` binds ingress to
 127.0.0.1, rejects non-loopback clients, unexpected Host and browser Origin/cross-site
@@ -6,7 +6,11 @@ requests, and validates worker-issued one-use reservation capabilities. Its stat
 directory is restricted to the current user (POSIX mode 0700; Windows requires
 appropriate per-user ACLs). Local inference and initial reservation issuance are
 available to local processes; **scoped caller authentication is not implemented**.
-It exposes no owner controls, peer listener, enrollment or transfer endpoints.
+It exposes no privileged owner controls or transfer endpoints. Phase 2 adds a
+separate TLS listener with signed, replay-fenced RPC, CA enrollment and eventual
+authority-signed revocation. It exposes only exchange/acquire/execute/release;
+local-only routes remain inaccessible on that listener. See
+[Phase 2 security and operating limits](phase-2.md).
 See [Phase 1](phase-1.md); Phase 6's authenticated owner API remains required.
 [The audit](upstream-audit.md) records inherited unauthenticated
 routes, wildcard binds and external telemetry. Do not expose that runtime as an
@@ -37,7 +41,10 @@ Seeds and mDNS only locate candidates. Reject conflicting IDs, keys and trust
 anchors; require protocol compatibility before use. Transport certificate/pinning,
 credential provisioning/rotation, secure-store access for a background daemon and
 UI, replay windows, clock skew, expiry, and request size/rate limits must be fixed
-before their implementation phases. They are not invented by this draft OpenAPI.
+before their implementation phases. Phase 2 fixes peer enrollment, TLS/signature
+checks, replay fences and bounded RPC in its runtime documentation; OS secure-store
+integration, owner scopes and model transfers remain future work. The draft
+OpenAPI does not define those later implementation details.
 
 Revocation is eventually propagated: a partition cannot guarantee immediate global
 revocation or globally single-use enrollment invites. Short-lived credentials and

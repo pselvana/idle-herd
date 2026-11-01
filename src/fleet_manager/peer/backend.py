@@ -180,14 +180,20 @@ class AdmissionTransport(httpx.AsyncBaseTransport):
         except BaseException:
             await settle(self.ledger, token, stopped=False)
             raise
-        response.stream = FencedResponseStream(
-            response.stream,
-            self.ledger,
-            token,
-            ndjson=request.url.path in {"/api/chat", "/api/generate"},
-            status=response.status_code,
+        # Rebuild the response so even an eagerly buffered inner transport must
+        # traverse and close our accounting stream rather than cached content.
+        return httpx.Response(
+            response.status_code,
+            headers=response.headers,
+            extensions=response.extensions,
+            stream=FencedResponseStream(
+                response.stream,
+                self.ledger,
+                token,
+                ndjson=request.url.path in {"/api/chat", "/api/generate"},
+                status=response.status_code,
+            ),
         )
-        return response
 
     async def aclose(self):
         await self.inner.aclose()

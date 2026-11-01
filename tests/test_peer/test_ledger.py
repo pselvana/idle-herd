@@ -186,3 +186,18 @@ async def test_consume_rechecks_live_memory_and_backend(ledger):
     with pytest.raises(AdmissionError, match="backend_unavailable"):
         await ledger.consume(lease.token, lease.model)
     assert (await ledger.inspect(lease.token)).state == "reserved"
+
+
+async def test_origin_cleanup_preserves_reused_slots_and_running_work(ledger):
+    first = await ledger.acquire(spec("first"))
+    await ledger.release(first.token)
+    replacement = await ledger.acquire(spec("replacement"))
+    # A completed origin can resume after another request already reuses its slot.
+    await ledger.abandon_unconsumed(first.token)
+    assert (await ledger.inspect(replacement.token)).state == "reserved"
+    await ledger.consume(replacement.token, replacement.model)
+    await ledger.abandon_unconsumed(replacement.token)
+    assert (await ledger.inspect(replacement.token)).state == "running"
+    await ledger.finish(replacement.token, stopped=False)
+    await ledger.abandon_unconsumed(replacement.token)
+    assert (await ledger.inspect(replacement.token)).state == "quarantined"

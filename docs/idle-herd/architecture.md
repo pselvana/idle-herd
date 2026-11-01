@@ -1,14 +1,15 @@
-# Idle-Herd architecture: Phase 1 and target design
+# Idle-Herd architecture: Phase 2 and target design
 
-**Current runtime:** `idle-herd` combines local ingress, inventory refresh,
-the Ollama adapter and durable admission in one native process. It registers
-the existing inference translators with a local-only registry and a fenced backend
-transport, without upstream's router lifecycle, discovery, heartbeat receiver,
-preloader or telemetry. The ledger owns a shared cross-model slot/memory budget;
-legacy queues only schedule candidates. See [Phase 1](phase-1.md) for code
-boundaries, mock-process evidence, conservative crash quarantine and limitations.
-The remaining architecture below describes future phases. Legacy commands retain
-their original router/node lifecycle and additional backend integrations.
+**Current runtime:** `idle-herd` combines localhost ingress, local Ollama inventory,
+and durable worker admission in one native process. Phase 2 adds a separately
+configured TLS peer listener, device-specific CA enrollment, signed peer exchange,
+persisted endpoint reconnection and direct worker admission/streaming. Local
+execution never contacts discovery or a seed. The origin tries its local worker
+before directly negotiating a remote grant; remote capacity is advisory. Existing
+wire translators and worker fencing serve both kinds of requests. See
+[Phase 2](phase-2.md), [Phase 1 recovery](phase-1.md) and
+[verification](implementation-status.md). Remaining sections describe future phases
+where they go beyond these implementations. Legacy commands retain upstream behavior.
 
 The target is a symmetric native peer: every peer has local ingress, an origin scheduler and journal, worker-local admission, backend adapters, authenticated discovery and host sensors. A peer may be ingress-only if its backend or policy is ineligible. The origin ranks candidates from a freshness-labeled peer view, asks a worker directly for admission, then dispatches using that worker's token. The worker owns its ledger and checks current resources and policy. Jobs, membership, model inventory, lease ledger and optional administrative consensus have distinct authorities; gossip cannot allocate resources. See the ADRs in this directory and the planned API contract in [api.md](api.md).
 

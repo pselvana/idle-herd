@@ -21,6 +21,32 @@ class PeerSettings(BaseSettings):
     weight_multiplier: float = Field(default=1.2, ge=1)
     request_memory_gb: float = Field(default=1, gt=0)
     reserve_memory_gb: float = Field(default=2, ge=0)
+    # Peer transport is opt-in and uses an explicitly allocated, separate port.
+    peer_endpoint: str | None = None
+    seeds: list[str] = Field(default_factory=list, max_length=128)
+    peer_interval: float = Field(default=5, ge=0.1, le=300)
+    peer_ttl: float = Field(default=30, ge=0.2, le=600)
+
+    @field_validator("peer_endpoint")
+    @classmethod
+    def peer_address(cls, value: str | None) -> str | None:
+        from fleet_manager.peer.discovery import validate_endpoint
+
+        if value is None:
+            return None
+        endpoint = validate_endpoint(value)
+        from urllib.parse import urlsplit
+
+        if 11434 <= urlsplit(endpoint).port <= 11449:
+            raise ValueError("peer listener must use an explicitly allocated non-backend port")
+        return endpoint
+
+    @field_validator("seeds")
+    @classmethod
+    def seed_addresses(cls, value: list[str]) -> list[str]:
+        from fleet_manager.peer.discovery import validate_endpoint
+
+        return [validate_endpoint(endpoint) for endpoint in value]
 
     @field_validator("backend_url")
     @classmethod

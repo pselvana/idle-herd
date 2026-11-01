@@ -1943,3 +1943,18 @@ multi-peer survival are separate, unverified acceptance work.
 Final Phase 1 suite: 2037 passed, 3 optional ONNX skips, 3 inherited warnings;
 source lint/format and sdist/wheel build pass. See [exact commands, files and
 limits](idle-herd/implementation-status.md).
+
+### 2026-11-01 — Phase 2 native peer evidence
+
+Authenticated exchange can remove seed lifetime from execution: native TLS mock
+processes converged through a seed, then dispatched directly after it died. Both
+N=2 survivors and each N=3 last survivor completed local inference. A 2+1 incoming
+RPC filter preserved local execution on both sides; it was not an OS firewall test.
+A hundred requests from two origins never exceeded the receiving worker's one slot.
+See `docs/idle-herd/phase-2.md` and implementation status for exact scope/results.
+
+Sign exact wire bytes: Pydantic and Python JSON can spell a small float differently
+(`1e-6` versus `1e-06`). Re-serializing a signed lease response caused the origin
+to reject a valid grant, leaving it reserved until TTL. Returning the original
+signed bytes fixes the cause. Streaming authenticates its TLS certificate against
+the response signer before forwarding; a CA alone does not bind a particular worker.

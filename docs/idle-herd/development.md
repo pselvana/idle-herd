@@ -1,9 +1,10 @@
 # Native development, build and test paths
 
-Phase 1 retains Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
+Phases 1–2 retain Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
 and commands `herd` / `herd-node`, and adds `idle-herd` single-node ingress.
 Run `uv run idle-herd` with separately managed local Ollama on port 11434;
 ingress binds 127.0.0.1:11435. See [runtime/configuration/recovery](phase-1.md).
+Phase 2 adds opt-in authenticated peers; see [enrollment/operation](phase-2.md).
 There is no SwiftUI project, Go sidecar or native installer yet.
 See [verification](implementation-status.md)
 for the actual host/results and [upstream audit](upstream-audit.md) for limitations.
@@ -108,4 +109,5 @@ Native lifecycle work is staged as follows:
 Do not copy reference-fleet process-kill recipes from historical CLAUDE.md onto an
 unrelated machine. Native service installation and companion builds arrive in
 later phases; the UI never supervises daemon execution. Existing ports remain
-unchanged. Authenticated peer listener allocation remains to be reviewed.
+unchanged. Peer listeners use explicitly allocated unused private HTTPS endpoints;
+there is no default new peer port.

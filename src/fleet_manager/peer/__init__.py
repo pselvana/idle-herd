@@ -1,1 +1,1 @@
-"""Single-node Idle-Herd worker; no discovery or consensus dependency."""
+"""Native Idle-Herd peers; local worker authority has no discovery/quorum dependency."""

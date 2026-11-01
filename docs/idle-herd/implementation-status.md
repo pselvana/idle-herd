@@ -1,5 +1,150 @@
 # Idle-Herd implementation status
 
+## Phase 2 — implemented authenticated peer dispatch, November 1, 2026
+
+`uv run idle-herd` remains a native daemon with localhost ingress and its own
+Ollama worker ledger. A separately configured TLS listener adds device-specific
+CA enrollment, signed RPC, bidirectional exchange, persisted endpoint discovery
+and direct worker admission/streaming. There is no fixed leader, required seed,
+Raft service or container dependency. See [operation/security](phase-2.md).
+Older sections below are historical phase snapshots, not the current scope.
+
+- [x] Stable node keys/cluster identity, offline proof-of-possession enrollment,
+  independently pinned trust anchor, bounded time-limited device certificates.
+- [x] Authenticated bounded peer exchange, direct freshness/TTL, persisted known
+  endpoints, reconnect, partial-view diagnostics and no discovery-based grants.
+- [x] Signed requests with durable SQLite replay fences; exact signed response
+  bytes; stream signer bound to the actual encrypted TLS connection.
+- [x] Authority-signed eventual revocation propagation and persistence; offline
+  renewal works after the authority node's own device credential expires.
+- [x] Local-first live admission, origin-bound remote worker grants and direct
+  streaming through existing compatibility translators; no post-dispatch failover.
+- [x] Optional-listener/credential failures preserve eligible localhost inference.
+- [x] Native mock processes prove either N=2 survivor, each N=3 survivor, seed loss,
+  automatic rejoin, a 2+1 RPC-filter partition, first-byte streaming and contention.
+- [ ] Optional mDNS/Tailscale API discovery; static private-IP seeds work today.
+- [ ] Real Ollama/MLX, Linux/Windows hosts, OS services, sleep/wake and idle sensors.
+- [ ] Phases 3–10: idle policy, blocking fairness, durable jobs, controls/UI, sharing,
+  optional administrative Raft and finally Docker/Compose.
+
+### Phase 2 evidence and practical limits
+
+Tests use fabricated backends and temporary private state, never live models.
+The native harness uses actual loopback TCP/TLS and multiple OS processes. It
+streams OpenAI chat, Ollama chat, Anthropic Messages, Responses and embeddings
+between peers, with the first output observed before a blocked backend finishes.
+One worker receiving 100 requests from two origins starts exactly one execution,
+with peak active count one. Killing an origin mid-stream leaves independent worker
+computation active and charged beyond its actual 30-second lease TTL; another local
+acquisition remains busy, with no second backend execution. Both partitions retain
+local execution; peers recover
+when the test-only incoming RPC filter is removed. The filter is not an OS
+firewall/NAT integration test. Local N=1 crash/fencing tests remain in the suite.
+
+Security/failure tests reject forged, missing, stale and replayed credentials,
+including replay across restart; foreign principals cannot use another origin's
+lease. Revocation propagates over authenticated exchange and survives restart.
+Buffered, truncated and disconnected backend streams retain quarantine. Offline
+CLI enrollment passes end to end. Reused slot generations and running/quarantined
+work survive origin cleanup; optional uvicorn bind failure leaves local serving.
+
+Grants can remain reserved until TTL when their reply is lost. Once execution is
+sent there is no automatic retry: the outcome may be unknown and quarantine may
+need the documented offline backend-stop attestation. History/lease retention is
+unbounded as in Phase 1. These are worker-local safety guarantees, not globally
+exactly-once execution or complete capacity. No Raft process exists to kill; its
+absence from inference is implemented, not a simulated quorum test.
+
+Private literal-IP HTTPS endpoints only; no arbitrary DNS/public referrals, mDNS
+adapter, automatic NAT traversal or fixed peer port. Endpoints are retained up to
+128 without eviction, so authenticated referral exhaustion limits discovery;
+replacing a worker at a cached address requires offline cache cleanup. Standard
+model listings/auto selection and public capacity/acquire remain local-only;
+explicit model inference can dispatch to remote peers. Blocking waits are Phase 4.
+Revocation is eventual during partitions. Credential import/rotation is offline;
+protect a single authority key/issuer registry and apply Windows per-user ACLs.
+Mode controls and unknown-human-activity policy are future phases; Phase 2 does
+not accept idle-only/background work or add model sharing.
+
+### Phase 2 commands and results
+
+Host: Darwin arm64, Python 3.14.2; core/dev environment with cryptography 50.0.2.
+The new declared dependency is `cryptography>=44.0.1`. `uv` means
+`/private/tmp/idle-herd-phase0-tools/bin/uv`, with
+`UV_CACHE_DIR=/private/tmp/idle-herd-phase0-uv-cache` on each command.
+
+| Command | Result |
+|---|---|
+| `uv sync --extra dev` | Exit 0; resolves 75 packages, including the crypto dependency installed for focused tests |
+| `uv run --offline pytest --tb=short -q > /private/tmp/idle-herd-phase2-final-validation.log 2>&1` | Exit 0: **2073 passed, 3 skipped, 3 warnings in 65.55s**; 2076 collected |
+| `uv run --offline ruff check src/` | Exit 0, all checks passed |
+| `uv run --offline ruff format --check src/` | Exit 0, 95 files already formatted |
+| `.venv/bin/ruff check tests/test_peer/` | Exit 0, all checks passed |
+| `.venv/bin/ruff format --check tests/test_peer/` | Exit 0, 12 files already formatted |
+| `.venv/bin/pytest -q tests/test_peer/test_rpc.py` | Final follow-up: exit 0, 10 passed in 0.53s, including validation-error redaction and origin API-key checks |
+| `.venv/bin/pytest -q tests/test_peer/test_identity.py tests/test_peer/test_rpc.py tests/test_peer/test_cli.py` | Exit 0, 15 passed in 0.40s; includes expired-authority renewal |
+| `.venv/bin/pytest -q tests/test_peer/test_ledger.py tests/test_peer/test_rpc.py tests/test_peer/test_cli.py` | Exit 0, 21 passed in 0.58s; final cleanup/listener regressions |
+| `.venv/bin/pytest -q tests/test_peer/test_peer_network.py` | Native survivor/partition run: exit 0, 4 passed in 14.61s; final full suite also includes origin death |
+| `.venv/bin/pytest -q tests/test_peer/test_peer_network.py::test_origin_death_keeps_remote_execution_charged` | Exit 0, 1 passed in 31.50s; waits beyond actual remote lease TTL |
+| `uv run --offline idle-herd --help` | Exit 0, all enrollment/recovery commands visible |
+| `uv build --offline --out-dir /private/tmp/idle-herd-phase2-dist` | Exit 0, wheel and sdist 0.12.2 built |
+| `git diff --check` | Exit 0 |
+
+Initial offline uv resolution could not find cryptography in its cache; approved
+`uv sync --extra dev` resolved it. Native socket tests initially encountered the
+sandbox bind restriction and were rerun with approved native access. No failing
+assertions were skipped. Three optional ONNX skips, three inherited queue coroutine
+warnings and the fixture-loop-scope deprecation remain. Five inherited telemetry
+schema tests can contact the internet despite `uv --offline`; inference fixtures
+use loopback/mock transports only. No Go/container tests, CVE audit, real backend,
+fleet deployment, installer, soak, commit, push or publication was performed.
+Work stayed on `main`, with GPT-6.1 Terra subagents and no worktrees.
+
+### Exact Phase 2 changed files
+
+Modified source/configuration:
+
+- `pyproject.toml`
+- `src/fleet_manager/cli/peer_cli.py`
+- `src/fleet_manager/peer/__init__.py`
+- `src/fleet_manager/peer/app.py`
+- `src/fleet_manager/peer/backend.py`
+- `src/fleet_manager/peer/local_ledger.py`
+- `src/fleet_manager/peer/models.py`
+- `tests/test_peer/test_ledger.py`
+
+Added source/tests:
+
+- `src/fleet_manager/peer/identity.py`
+- `src/fleet_manager/peer/discovery.py`
+- `src/fleet_manager/peer/network.py`
+- `tests/test_peer/network_runner.py`
+- `tests/test_peer/test_cli.py`
+- `tests/test_peer/test_discovery.py`
+- `tests/test_peer/test_identity.py`
+- `tests/test_peer/test_peer_network.py`
+- `tests/test_peer/test_rpc.py`
+
+Documentation:
+
+- `AGENTS.md`
+- `CLAUDE.md`
+- `IDLE-HERD_IMPLEMENTATION_PLAN.md` (preserves the pre-existing starter-prompt edit)
+- `README.md`
+- `docs/idle-herd/adr-002-admission-and-capacity.md`
+- `docs/idle-herd/adr-003-identity-and-jobs.md`
+- `docs/idle-herd/api.md`
+- `docs/idle-herd/architecture.md`
+- `docs/idle-herd/development.md`
+- `docs/idle-herd/implementation-status.md`
+- `docs/idle-herd/security.md`
+- `docs/idle-herd/phase-2.md` (added)
+- `docs/issues.md`
+- `docs/observations.md`
+
+Next scoped phase: **Phase 3, native OS idle-awareness**. Future Gherkin/OpenAPI
+scenarios remain specifications unless explicitly exercised by these runtime tests.
+
 ## Phase 1 — implemented single-node worker, November 1, 2026
 
 Current command: `uv run idle-herd`. It runs localhost ingress and an Ollama

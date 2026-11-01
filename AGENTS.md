@@ -1,10 +1,11 @@
 # AGENTS.md — Ollama Herd
 
-## Idle-Herd fork instructions (Phase 1)
+## Idle-Herd fork instructions (Phase 2)
 
 This checkout is the Idle-Herd fork. The upstream guidance below is retained;
 these fork rules govern the architecture where it differs. `idle-herd` now runs
-single-node local ingress and durable worker admission without discovery or Raft.
+local ingress and durable worker admission, with opt-in authenticated peer
+discovery/direct dispatch and no Raft. See [Phase 2](docs/idle-herd/phase-2.md).
 Legacy `herd` / `herd-node` retain upstream behavior. Start at
 [implementation status](docs/idle-herd/implementation-status.md)
 and the canonical [implementation plan](IDLE-HERD_IMPLEMENTATION_PLAN.md).

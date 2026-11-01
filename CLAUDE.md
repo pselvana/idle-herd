@@ -2,11 +2,12 @@
 
 ## Idle-Herd fork status
 
-Phase 1 adds `uv run idle-herd`: local ingress, Ollama adapter and durable
-worker-owned admission in one native process, with no discovery or Raft.
-See [runtime and recovery](docs/idle-herd/phase-1.md). Uncertain executions remain
-quarantined across restart until the backend is confirmed stopped; token expiry
-never frees running work. Mode controls, idle sensors and SwiftUI remain future work.
+Phase 2 adds offline device-specific enrollment, authenticated TLS peer exchange,
+persisted reconnection endpoints and worker-direct streaming to `uv run idle-herd`.
+Every node retains independent localhost ingress and durable worker admission.
+See [Phase 2 operation/security](docs/idle-herd/phase-2.md) and
+[Phase 1 recovery](docs/idle-herd/phase-1.md). Uncertain execution remains charged;
+expiry never frees running work. Idle sensors, modes, UI and jobs remain future work.
 The router/node commands and historical deployment notes below describe upstream.
 Follow the fork invariants in [AGENTS.md](AGENTS.md) and
 [implementation status](docs/idle-herd/implementation-status.md) before continuing.
@@ -14,7 +15,7 @@ See [native development/build/test paths](docs/idle-herd/development.md),
 [architecture](docs/idle-herd/architecture.md) and [API draft](docs/idle-herd/api.md).
 The supplied root plan uses the filename `IDLE-HERD_IMPLEMENTATION_PLAN.md`.
 Docker/Compose is deferred to Phase 10. No publishing or local fleet deployment
-was performed during Phase 1; tests used fabricated model backends.
+was performed during Phases 1–2; tests used fabricated model backends.
 
 ## Build & Run
 

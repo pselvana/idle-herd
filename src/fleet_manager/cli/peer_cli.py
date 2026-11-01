@@ -1,59 +1,233 @@
-"""Native single-node peer CLI; existing herd/herd-node commands remain available."""
+"""Native peer ingress, offline enrollment and worker recovery commands."""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Annotated
+from urllib.parse import urlsplit
 
 import typer
 import uvicorn
 
-from fleet_manager.peer.app import create_peer_app
+from fleet_manager.peer.app import create_peer_app, create_peer_rpc_app
+from fleet_manager.peer.identity import (
+    DeviceCredential,
+    EnrollmentRequest,
+    IdentityError,
+    PeerIdentity,
+)
 from fleet_manager.peer.local_ledger import LocalLedger
-from fleet_manager.peer.models import PeerSettings
+from fleet_manager.peer.models import AdmissionError, PeerSettings
 
 cli = typer.Typer(no_args_is_help=False)
 
 
+@asynccontextmanager
+async def offline_worker():
+    async def unused_fit(model):
+        raise RuntimeError("offline maintenance does not admit inference")
+
+    ledger = LocalLedger(PeerSettings(), unused_fit)
+    await ledger.open()  # Also excludes concurrent daemon/issuer/maintenance processes.
+    try:
+        yield ledger
+    finally:
+        await ledger.close()
+
+
+async def serve(settings):
+    app = create_peer_app(settings)
+    # Own the shared lifespan once. Both listeners stop before durable storage closes.
+    async with app.router.lifespan_context(app):
+        servers = [
+            uvicorn.Server(
+                uvicorn.Config(
+                    app,
+                    host="127.0.0.1",
+                    port=11435,
+                    lifespan="off",
+                    proxy_headers=False,
+                )
+            )
+        ]
+        if settings.peer_endpoint and app.state.identity:
+            endpoint = urlsplit(settings.peer_endpoint)
+            identity = app.state.identity
+            servers.append(
+                uvicorn.Server(
+                    uvicorn.Config(
+                        create_peer_rpc_app(app),
+                        host=endpoint.hostname,
+                        port=endpoint.port,
+                        ssl_certfile=str(identity.cert_path),
+                        ssl_keyfile=str(identity.key_path),
+                        lifespan="off",
+                        proxy_headers=False,
+                        limit_concurrency=256,
+                        timeout_keep_alive=5,
+                    )
+                )
+            )
+
+        async def serve_optional_peer(server):
+            # Only localhost ingress owns process signal handling/lifetime.
+            server.capture_signals = contextlib.nullcontext
+            try:
+                await server.serve()
+                if not servers[0].should_exit:
+                    raise OSError("peer listener exited")
+            except (OSError, SystemExit) as exc:
+                app.state.peer_error = f"Peer listener unavailable: {exc}"
+                app.state.directory = None
+                peer_task = getattr(app.state, "peer_task", None)
+                if peer_task:
+                    peer_task.cancel()
+
+        local_task = asyncio.create_task(servers[0].serve())
+        tasks = [local_task]
+        if len(servers) > 1:
+            tasks.append(asyncio.create_task(serve_optional_peer(servers[1])))
+        try:
+            await local_task
+        finally:
+            for server in servers:
+                server.should_exit = True
+            await asyncio.gather(*tasks)
+
+
 @cli.callback(invoke_without_command=True)
 def run(ctx: typer.Context):
-    """Run local APIs on 127.0.0.1:11435 with no peers or consensus service.
+    """Run localhost APIs; optionally enable a separate authenticated TLS peer listener.
 
-    Configure via IDLE_HERD_DATA_DIR, IDLE_HERD_BACKEND_URL, IDLE_HERD_SLOTS,
-    IDLE_HERD_MODEL_SLOTS (JSON) and the documented memory allowances.
+    Configure IDLE_HERD_PEER_ENDPOINT and IDLE_HERD_SEEDS (JSON array).
+    Peer ports are explicitly allocated; existing backend ports are unchanged.
     """
     if ctx.invoked_subcommand is None:
-        uvicorn.run(create_peer_app(PeerSettings()), host="127.0.0.1", port=11435)
+        asyncio.run(serve(PeerSettings()))
 
 
 @cli.command()
-def reconcile(
-    confirm_backend_stopped: bool = typer.Option(False, "--confirm-backend-stopped"),
-):
-    """After stopping the peer AND all Ollama runners, release quarantined slots.
+def init():
+    """Initialize a one-node cluster and its private enrollment authority, offline."""
 
-    This explicit operator attestation is required: Ollama /api/ps does not
-    prove a request ended. Never run this while backend execution may survive.
+    async def initialize():
+        async with offline_worker() as ledger:
+            identity = await PeerIdentity.open(
+                ledger.settings.data_dir, ledger.worker_id, ledger.cluster_id
+            )
+            return {
+                "worker_id": ledger.worker_id,
+                "cluster_id": ledger.cluster_id,
+                "trust_fingerprint": identity.fingerprint,
+            }
+
+    typer.echo(json.dumps(asyncio.run(initialize()), indent=2))
+
+
+def write_artifact(path: Path, artifact):
+    # Offline CLI only; public credentials and requests, never private keys.
+    path.write_text(artifact.model_dump_json(indent=2) + "\n")
+
+
+@cli.command("enrollment-request")
+def enrollment_request(output: Annotated[Path, typer.Option("--output")]):
+    """Create a public device request on a new joining worker, before init/serving."""
+
+    async def request():
+        async with offline_worker() as ledger:
+            return await PeerIdentity.enrollment_request(ledger.settings.data_dir, ledger.worker_id)
+
+    write_artifact(output, asyncio.run(request()))
+    typer.echo(f"Public enrollment request written to {output}")
+
+
+@cli.command("issue-credential")
+def issue_credential(
+    request: Path,
+    output: Annotated[Path, typer.Option("--output")],
+    days: int = typer.Option(30, min=1, max=90),
+):
+    """Approve a device request on the offline authority; transfer only public artifacts."""
+
+    async def issue():
+        async with offline_worker() as ledger:
+            identity = await PeerIdentity.open_authority(
+                ledger.settings.data_dir, ledger.worker_id, ledger.cluster_id
+            )
+            return await identity.issue_credential(
+                EnrollmentRequest.model_validate_json(request.read_bytes()), days
+            )
+
+    write_artifact(output, asyncio.run(issue()))
+    typer.echo(f"Device credential written to {output}")
+
+
+@cli.command()
+def join(credential: Path, fingerprint: str = typer.Option(..., "--fingerprint")):
+    """Import a public device credential using an independently verified CA fingerprint.
+
+    Requires a new joining ledger with no lease history. Existing authorities cannot
+    silently change clusters. The daemon must be stopped for every enrollment command.
     """
+
+    async def enroll():
+        record = DeviceCredential.model_validate_json(credential.read_bytes())
+        async with offline_worker() as ledger:
+            if record.worker_id != ledger.worker_id:
+                raise IdentityError("credential belongs to another worker")
+            # Check eligibility before writing identity material.
+            count = await (await ledger._db.execute("SELECT count(*) FROM leases")).fetchone()
+            if count[0] and record.cluster_id != ledger.cluster_id:
+                raise AdmissionError("cannot_enroll_worker_with_lease_history")
+            await PeerIdentity.import_credential(ledger.settings.data_dir, record, fingerprint)
+            await ledger.adopt_cluster(record.cluster_id)
+            await PeerIdentity.open(ledger.settings.data_dir, ledger.worker_id, ledger.cluster_id)
+
+    asyncio.run(enroll())
+    typer.echo("Device enrolled; configure peer endpoint and one or more reachable seeds.")
+
+
+@cli.command()
+def revoke(credential: Path):
+    """Revoke a device credential on the offline authority; gossip propagates on reconnect."""
+
+    async def revoke_device():
+        async with offline_worker() as ledger:
+            identity = await PeerIdentity.open_authority(
+                ledger.settings.data_dir, ledger.worker_id, ledger.cluster_id
+            )
+            await identity.revoke_credential(
+                DeviceCredential.model_validate_json(credential.read_bytes())
+            )
+
+    asyncio.run(revoke_device())
+    typer.echo("Revocation saved; disconnected peers learn it on authenticated reconnect.")
+
+
+@cli.command()
+def reconcile(confirm_backend_stopped: bool = typer.Option(False, "--confirm-backend-stopped")):
+    """After stopping the peer AND all Ollama runners, release quarantined slots."""
     if not confirm_backend_stopped:
         raise typer.BadParameter("Stop the peer and ALL backend runners; --confirm-backend-stopped")
 
     async def repair():
-        async def unused_fit(model):
-            raise RuntimeError("reconciliation does not admit inference")
-
-        ledger = LocalLedger(PeerSettings(), unused_fit)
-        await ledger.open()  # Refuses maintenance while another daemon owns this directory.
-        try:
+        async with offline_worker() as ledger:
             await ledger.reconcile_stopped_backend()
-        finally:
-            await ledger.close()
 
     asyncio.run(repair())
     typer.echo("Recorded backend-stop attestation; quarantined leases released.")
 
 
 def main():
-    cli()
+    try:
+        cli()
+    except (IdentityError, AdmissionError) as exc:
+        typer.echo(str(exc), err=True)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

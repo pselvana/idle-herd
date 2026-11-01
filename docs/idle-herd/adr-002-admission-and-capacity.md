@@ -1,7 +1,8 @@
 # ADR 002: Worker-owned fenced leases and advisory capacity
 
-**Status: Phase 1 local ledger implemented; remote admission, idle policy and
-blocking wait protocol remain planned.** See [runtime](phase-1.md) and
+**Status: Phases 1–2 local ledger and authenticated remote admission implemented;
+idle policy and blocking waits remain planned.** See [Phase 2](phase-2.md),
+[recovery](phase-1.md) and
 [verification](implementation-status.md). Native mock processes verify commit,
 contention and restart fencing. Uncertain backend execution is quarantined;
 only an offline, operator-confirmed backend stop permits reclamation. This is

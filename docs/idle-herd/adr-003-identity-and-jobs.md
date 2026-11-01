@@ -1,6 +1,8 @@
 # ADR 003: Peer trust and durable jobs
 
-**Status: proposed Phase 0 decision; not implemented.**
+**Status: Phase 2 identity/enrollment and authenticated peer RPC implemented;
+durable jobs/replication remain planned.** See [Phase 2](phase-2.md) for concrete
+TLS/signature, revocation, expiry, scope and persistence behavior.
 
 Initialize a stable cluster UUID, local node keypair and trust anchor in durable local storage. Enrollment uses an administrator-signed, time-limited device-specific credential or protected direct pairing; peer discovery alone grants no trust. Authenticate direct admission, execution and transfer RPCs, enforce authorization, reject conflicting node IDs/keys or trust anchors, and never expose internal backend URLs to clients. Keys survive ordinary restart. Revocation and membership changes propagate when reachable: a partition prevents instantaneous global revocation or guaranteed global single-use invites. Use short-lived credentials, expiry and conservative reconciliation; do not promise stronger revocation semantics.
 

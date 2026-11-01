@@ -789,11 +789,17 @@ required before reclaiming it. Phase 4's full capacity contract is still a draft
 
 ### Phase 2 — Peer-to-peer discovery and dispatch with intermittent nodes
 
-- [ ] Add signed identity, trust anchor, seed discovery, bidirectional peer exchange, TTL reachability cache and optional LAN mDNS.
-- [ ] Authenticate peer RPC and directly negotiate reservations with receiving worker; **no elected leader** involved.
-- [ ] Route requests through local ingress and stream responses directly from accepted workers.
-- [ ] Implement churn handling for a peer joining/leaving/restarting, stale capacity records, and firewall/NAT failure diagnostics.
-- [ ] Test one-peer, two-peer, three-peer, and partitioned groups, including intentional leader/seed outages.
+- [x] Add signed identity, trust anchor, seed discovery, bidirectional peer exchange and TTL reachability cache.
+- [ ] Optional LAN mDNS adapter (deferred; static seeds and peer exchange satisfy core acceptance).
+- [x] Authenticate peer RPC and directly negotiate reservations with receiving worker; **no elected leader** involved.
+- [x] Route requests through local ingress and stream responses directly from accepted workers.
+- [x] Implement churn handling for a peer joining/leaving/restarting, stale capacity records, and firewall/NAT failure diagnostics.
+- [x] Test one-peer, two-peer, three-peer, and partitioned groups, including intentional leader/seed outages.
+
+[Runtime/security](docs/idle-herd/phase-2.md) and [exact evidence](docs/idle-herd/implementation-status.md).
+Static private-IP seeds and persisted authenticated exchange are implemented; optional
+mDNS/Tailscale API discovery remains deferred. Native tests use mock backends, not
+real models or Linux/Windows hosts.
 
 **Acceptance:** With two peers, either can dispatch to the other. Shut off either node: survivor still serves its local backend. Bring peer back: it rejoins automatically. With three peers, shut down two: remaining one works. Break the network into 2+1: both sides execute locally.
 
@@ -941,7 +947,7 @@ Production Compose must have separate secrets for node enrollment, CA and peer a
 
 ### Starter Codex prompt (paste into extension)
 
-> You are implementing **Idle-Herd**, a cross-platform, native-first, churn-tolerant peer-to-peer fork of Ollama Herd. Read `AGENTS.md`, `CLAUDE.md`, `UPSTREAM_BASE_COMMIT.txt`, and `IDLE-HERD_IMPLEMENTATION_PLAN.md`, then inspect the actual checked-out files. **Critical invariants:** (1) localhost OpenAI/Ollama API on EVERY node, NO central router; (2) N=1 works without peers or Raft; (3) N=2 or N>=3 may shrink to one surviving peer and that peer must still run local jobs; (4) worker-local atomic admission and durable fenced lease tokens; (5) cluster capacity is advisory while blocking acquisition retries against live worker admission; (6) optional Raft does NOT gate inference; (7) native OS execution/idle policy on macOS/Linux/Windows first; (8) **Docker/Compose integration ONLY in Phase 10**; (9) SwiftUI macOS menu bar companion uses versioned secure localhost control API and is NOT responsible for daemon lifetime; (10) `offline` withdraws a peer from the cluster but retains localhost inference, unlike `paused`; (11) verified compatible peer-to-peer model sharing; (12) honest at-least-once recovery and partitions. **For this task implement Phase 0 only**: audit upstream, run baseline tests, draft ADRs/OpenAPI, add local node mode/UI separation to architecture, and document native development/build/test paths. Do not implement future phases. Report exact changed files, commands/results, and remaining risks.
+> You are implementing **Idle-Herd**, a cross-platform, native-first, churn-tolerant peer-to-peer fork of Ollama Herd.  Use GPT-6.1 Terra for subagents. Read `AGENTS.md`, `CLAUDE.md`, `UPSTREAM_BASE_COMMIT.txt`, and `IDLE-HERD_IMPLEMENTATION_PLAN.md`, then inspect the actual checked-out files. **Critical invariants:** (1) localhost OpenAI/Ollama API on EVERY node, NO central router; (2) N=1 works without peers or Raft; (3) N=2 or N>=3 may shrink to one surviving peer and that peer must still run local jobs; (4) worker-local atomic admission and durable fenced lease tokens; (5) cluster capacity is advisory while blocking acquisition retries against live worker admission; (6) optional Raft does NOT gate inference; (7) native OS execution/idle policy on macOS/Linux/Windows first; (8) **Docker/Compose integration ONLY in Phase 10**; (9) SwiftUI macOS menu bar companion uses versioned secure localhost control API and is NOT responsible for daemon lifetime; (10) `offline` withdraws a peer from the cluster but retains localhost inference, unlike `paused`; (11) verified compatible peer-to-peer model sharing; (12) honest at-least-once recovery and partitions. **For this task implement Phase 0 only**: audit upstream, run baseline tests, draft ADRs/OpenAPI, add local node mode/UI separation to architecture, and document native development/build/test paths. Do not implement future phases. Report exact changed files, commands/results, and remaining risks.
 
 ### Phase-specific prompts
 
@@ -1144,10 +1150,12 @@ limitations rather than treating roadmap guarantees as implemented behavior.
 - OpenAI Codex VS Code extension: https://marketplace.visualstudio.com/items?itemName=OpenAI.chatgpt
 - Codex IDE workflow: https://learn.chatgpt.com/docs/codex/ide
 
-**Revision:** November 1, 2026 (v5). Records Phase 0 design/baseline and Phase 1
+**Revision:** November 1, 2026 (v6). Records Phase 0 design/baseline and Phase 1
 single-node ingress, durable worker leases and native mock crash tests. Phase 1
 hardware acceptance and the documented recovery/fit limits remain explicit.
-Phases 2–10 remain unimplemented; optional Raft stays outside inference and
+Phase 2 now implements authenticated enrollment, peer exchange and direct worker
+streaming, with native mock survivor/partition tests. Phases 3–10 remain
+unimplemented; optional Raft stays outside inference and
 Docker/Compose stays in Phase 10. Any upstream guidance suggesting an always-on
 router or mandatory Raft must be interpreted using current §§0–4, 8–9, 11–12.
 

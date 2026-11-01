@@ -67,6 +67,8 @@ class LocalLedger:
                 CREATE TABLE IF NOT EXISTS events (
                     sequence INTEGER PRIMARY KEY, reservation_id TEXT,
                     state TEXT NOT NULL, observed_at REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS peer_nonces (
+                    nonce TEXT PRIMARY KEY, expires_at REAL NOT NULL);
             """)
             async with self._transaction():
                 await self._db.execute(
@@ -106,6 +108,32 @@ class LocalLedger:
             "UPDATE leases SET state='expired' WHERE state='reserved' AND expires_at<=?",
             (time.time(),),
         )
+
+    async def adopt_cluster(self, cluster_id: str):
+        """Offline enrollment only: never reassign an authority with lease history."""
+        async with self._transaction():
+            if cluster_id == self.cluster_id:
+                return
+            row = await (await self._db.execute("SELECT count(*) FROM leases")).fetchone()
+            if row[0]:
+                raise AdmissionError("cannot_enroll_worker_with_lease_history")
+            await self._db.execute("UPDATE identity SET cluster_id=?", (cluster_id,))
+        self.cluster_id = cluster_id
+
+    async def accept_peer_nonce(self, worker_id: str, nonce: str, timestamp: int):
+        """Persist authenticated RPC replay fences before any mutation/acknowledgment."""
+        async with self._transaction():
+            await self._db.execute("DELETE FROM peer_nonces WHERE expires_at<?", (time.time(),))
+            row = await (await self._db.execute("SELECT count(*) FROM peer_nonces")).fetchone()
+            if row[0] >= 10000:
+                raise AdmissionError("peer_replay_budget_exhausted", 429)
+            try:
+                await self._db.execute(
+                    "INSERT INTO peer_nonces VALUES (?,?)",
+                    (worker_id + ":" + nonce, timestamp + 121),
+                )
+            except aiosqlite.IntegrityError as exc:
+                raise AdmissionError("replayed_peer_request", 403) from exc
 
     async def _occupied(self) -> list[Lease]:
         rows = await (
@@ -231,6 +259,15 @@ class LocalLedger:
                 raise AdmissionError("execution_not_confirmed_stopped")
             await self._event(lease, "released")
             return lease.model_copy(update={"state": "released"})
+
+    async def abandon_unconsumed(self, token: str):
+        """Internal origin cleanup; never alter running work or a reused slot."""
+        async with self._transaction():
+            row = await (
+                await self._db.execute("SELECT * FROM leases WHERE token=?", (token,))
+            ).fetchone()
+            if row and row["state"] == "reserved" and row["worker_incarnation"] == self.incarnation:
+                await self._event(Lease(**dict(row)), "released")
 
     async def finish(self, token: str, *, stopped: bool):
         """Internal transport confirmation; never exposed as a client release."""
