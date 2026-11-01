@@ -11,7 +11,10 @@ expiry never frees running work. [Phase 3](docs/idle-herd/phase-3.md) adds
 worker-local native sensor and idle policy checks. [Phase 4](docs/idle-herd/phase-4.md)
 adds advisory cluster capacity and bounded origin waiters. [Phase 5](docs/idle-herd/phase-5.md)
 adds origin-local durable jobs, acknowledged peer copies and explicitly retry-safe
-at-least-once recovery. Owner mode controls and UI remain future work.
+at-least-once recovery. [Phase 6](docs/idle-herd/phase-6.md) adds authenticated
+local owner controls, persistent modes/preferences, a SwiftUI menu bar client
+and explicit macOS user-service configuration. UI lifetime never owns daemon
+lifetime; real launchd/GUI lifecycle acceptance remains unverified.
 The router/node commands and historical deployment notes below describe upstream.
 Follow the fork invariants in [AGENTS.md](AGENTS.md) and
 [implementation status](docs/idle-herd/implementation-status.md) before continuing.

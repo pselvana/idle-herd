@@ -277,6 +277,13 @@ class OriginWaiters:
 
     async def _attempt(self, key, spec, item):
         row = await (await self._db.execute("SELECT * FROM claims WHERE key=?", (key,))).fetchone()
+        mode = (await self.local.state.ledger.mode_state()).mode
+        if mode == "paused":
+            raise AdmissionError("manual_paused", 503)
+        if mode == "offline" and row["target"] not in {None, "local"}:
+            # A potentially granted remote claim cannot be redirected to a new
+            # authority merely because the owner withdrew from the cluster.
+            raise AdmissionError("manual_offline", 503)
         if row["lease"]:
             lease = Lease.model_validate_json(row["lease"])
             current = await self.reservation(lease.reservation_id, lease.token)
@@ -285,6 +292,8 @@ class OriginWaiters:
             return current, "no_capacity"
         directory = self.local.state.directory
         candidates = directory.candidates(spec.model) if directory else []
+        if mode == "offline":
+            candidates = []
         targets = ["local"] + [p.model_dump_json() for p in candidates]
         if row["target"]:
             targets = [row["target"]]

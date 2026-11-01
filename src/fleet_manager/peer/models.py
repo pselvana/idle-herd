@@ -148,6 +148,9 @@ class Lease(BaseModel):
     memory_gb: float
     workload: Workload = "interactive"
     idle_only: bool = False
+    peer_origin: bool = False
+    created_at: float = 0
+    updated_at: float = 0
 
 
 class EligibilityDecision(BaseModel):

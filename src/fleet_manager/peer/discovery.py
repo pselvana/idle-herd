@@ -149,6 +149,7 @@ class PeerDirectory:
         self._peers: dict[str, _Peer] = {}
         self._persist_lock = asyncio.Lock()
         self.changed = asyncio.Event()
+        self.participating = None
         self._owns_client = client is None
         self.client = client or httpx.AsyncClient(
             verify=identity.client_ssl_context(), timeout=5, follow_redirects=False, trust_env=False
@@ -253,6 +254,8 @@ class PeerDirectory:
         self.changed.set()
 
     async def exchange(self, authenticated_worker_id: str, payload: Exchange) -> Exchange:
+        if self.participating is not None and not await self.participating():
+            raise ValueError("manual_offline")
         local = await self._local()
         if (
             payload.sender.worker_id != authenticated_worker_id
@@ -318,6 +321,8 @@ class PeerDirectory:
             peer.last_seen = None
 
     async def refresh(self) -> None:
+        if self.participating is not None and not await self.participating():
+            return
         local = await self._local()
         await asyncio.gather(*(self._probe(peer, local) for peer in list(self._peers.values())))
         await self._persist()

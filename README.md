@@ -1,6 +1,6 @@
 # Idle-Herd
 
-This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 5**.
+This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 6**.
 `uv run idle-herd` starts single-node localhost ingress and durable worker-owned
 slot reservations in one process. Opt-in authenticated peer discovery and direct
 streaming need no leader or live seed; Raft is absent. It uses a
@@ -21,7 +21,11 @@ See [Phase 4 capacity and acquisition](docs/idle-herd/phase-4.md) for visibility
 snapshots, bounded waiting, origin idempotency and the Python lease helper.
 See [Phase 5 durable jobs and recovery](docs/idle-herd/phase-5.md) for local journals,
 acknowledged peer copies and explicitly at-least-once recovery.
-Mode controls, sharing and the macOS companion remain future phases.
+See [Phase 6 owner controls and menu bar](docs/idle-herd/phase-6.md) for authenticated
+local modes/preferences, CLI parity, the SwiftUI companion and optional launchd
+user service. Offline retains localhost inference; Pause refuses new inference.
+UI exit leaves daemon execution independent. Real GUI/login lifecycle acceptance
+remains unverified; sharing is Phase 7.
 Native socket tests use a mock model backend; real hardware sensors and
 Ollama/hardware inference have not been verified by this implementation.
 

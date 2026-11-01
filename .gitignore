@@ -26,6 +26,8 @@ env/
 htmlcov/
 .coverage
 uv.lock
+.build/
+.swiftpm/
 
 # Claude Code artifacts (worktrees, plan mode scratch)
 .claude/

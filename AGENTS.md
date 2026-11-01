@@ -1,6 +1,6 @@
 # AGENTS.md — Ollama Herd
 
-## Idle-Herd fork instructions (Phase 5)
+## Idle-Herd fork instructions (Phase 6)
 
 This checkout is the Idle-Herd fork. The upstream guidance below is retained;
 these fork rules govern the architecture where it differs. `idle-herd` now runs
@@ -8,7 +8,8 @@ local ingress and durable worker admission, with opt-in authenticated peer
 discovery/direct dispatch, worker-local idle policy and no Raft. See
 [Phase 2](docs/idle-herd/phase-2.md), [Phase 3](docs/idle-herd/phase-3.md),
 [Phase 4](docs/idle-herd/phase-4.md), and
-[Phase 5 durable jobs](docs/idle-herd/phase-5.md).
+[Phase 5 durable jobs](docs/idle-herd/phase-5.md), and
+[Phase 6 owner controls/menu bar](docs/idle-herd/phase-6.md).
 Legacy `herd` / `herd-node` retain upstream behavior. Start at
 [implementation status](docs/idle-herd/implementation-status.md)
 and the canonical [implementation plan](IDLE-HERD_IMPLEMENTATION_PLAN.md).
@@ -27,7 +28,7 @@ and the canonical [implementation plan](IDLE-HERD_IMPLEMENTATION_PLAN.md).
   execution by default; cancellation is explicit.
 - Native macOS/Linux/Windows services and idle policy come first. Unknown human
   activity cannot grant `idle_only` work. **Docker/Compose is Phase 10 only.**
-- The future SwiftUI menu bar companion and CLI share a versioned, authenticated
+- The SwiftUI menu bar companion and CLI share a versioned, authenticated
   loopback control API. Daemon and sensors survive UI exit; loopback alone does
   not authorize control. Keep peer RPC credentials and control scopes separate.
 - Model sharing requires authorization, provenance/digest verification, compatible

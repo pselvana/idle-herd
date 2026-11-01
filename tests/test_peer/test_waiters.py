@@ -14,6 +14,9 @@ class Ledger:
         self.leases = {}
         self.busy = False
 
+    async def mode_state(self):
+        return SimpleNamespace(mode="auto")
+
     async def acquire(self, spec):
         if self.busy:
             raise AdmissionError("busy", 429)

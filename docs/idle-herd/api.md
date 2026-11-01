@@ -1,12 +1,14 @@
-# Idle-Herd API contract — roadmap and Phases 1–4 subset
+# Idle-Herd API contract — roadmap and Phases 1–6 subset
 
 [openapi.yaml](openapi.yaml) remains the OpenAPI 3.1 future cluster/control
 contract. The running `/openapi.json` describes the implemented subset. See
 [Phase 1](phase-1.md) for local ledger and recovery, [Phase 2](phase-2.md) for
 authenticated peer transport, [Phase 3](phase-3.md) for idle policy, and
 [Phase 4](phase-4.md) for advisory cluster capacity, bounded acquisition,
-inspection, release and their actual fields and limitations. The future control
-scopes, modes, events and other sections below are not necessarily implemented.
+inspection, release and their actual fields and limitations. [Phase 5](phase-5.md)
+defines durable jobs and [Phase 6](phase-6.md) defines the implemented local
+control scopes, modes, preferences, events and companion. Other draft fields
+below are not necessarily implemented.
 Existing inference translators are reused; legacy `herd` retains upstream routes.
 
 ## Trust and visibility
@@ -30,3 +32,22 @@ Worker-local slot safety does not imply globally exactly-once jobs. Partitions o
 Both watch endpoints use `text/event-stream`. Each connection, including reconnection with `Last-Event-ID`, starts with a fresh `snapshot` event. Frames have an opaque `id`, an `event` matching the versioned JSON envelope's `type`, and `data` containing that envelope. Heartbeat comments are not state changes. Replay is best effort; clients must replace local state from the snapshot and treat missing, invalid, or expired cursors as a resynchronization, not assume a complete history. Capacity streams describe only the origin's reachable view; local streams describe local state. Clients should reconnect with backoff and can poll if streaming is unavailable. Stream ordering applies only within a connection; no cross-node ordering or exactly-once delivery is promised.
 
 Job summaries identify whether their origin and execution are local, peer, unassigned (execution only), or unknown without including job contents. Status, jobs, events, errors and diagnostics contain safe summaries only: no prompt/completion content, credentials, reservation tokens, private paths, or raw user activity. Diagnostic provenance and explanations must be redacted before display. UI lifetime is independent of the daemon; a disconnected UI must show unknown/reconnecting rather than stale healthy state.
+
+### Local login service
+
+The running loopback daemon exposes `GET /v1/node/service` to read-scoped clients
+and `PUT /v1/node/service` with `{"enabled": true}` or `{"enabled": false}` to
+control-scoped clients. Responses contain `version`, `supported`, `platform`,
+`installed`, `enabled`, and `running`; the last three may be `null` when unknown.
+On macOS this configures launch at the next login without unloading or restarting
+the current daemon; other platforms return 501 for a change. The installer uses
+the daemon's Python interpreter and copies its effective `IDLE_HERD_` settings into
+the owner-protected launch agent, including the data directory and peer settings.
+
+### Read-only dashboard
+
+`GET /dashboard` serves a minimal local status page. Enter the local read token to
+fetch the redacted status snapshot; the page keeps the token only in browser memory.
+The page offers no management actions. A fuller dashboard is planned for Phase 9.
+Same-origin browser reads require the bearer token; browser control writes and
+cross-origin requests remain rejected.

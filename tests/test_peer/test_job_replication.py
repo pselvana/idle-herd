@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -127,6 +128,10 @@ async def test_running_replica_waits_then_schedules_safe_retry(tmp_path):
         SimpleNamespace(
             state=SimpleNamespace(
                 job_journal=replica,
+                ledger=SimpleNamespace(
+                    worker_id="replica",
+                    cluster_participating=AsyncMock(return_value=True),
+                ),
                 identity=SimpleNamespace(worker_id="replica"),
                 directory=SimpleNamespace(snapshot=lambda: [peer]),
             )

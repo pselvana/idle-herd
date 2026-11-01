@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import sys
 import time
 
@@ -29,7 +30,10 @@ def mock_backend():
 
     @app.get("/api/tags")
     async def tags():
-        return {"models": [{"name": "tiny:latest", "size": 1000}]}
+        models = [{"name": "tiny:latest", "size": 1000}]
+        if os.getenv("IDLE_HERD_TEST_TWO_MODELS"):
+            models.append({"name": "tiny2:latest", "size": 1000})
+        return {"models": models}
 
     @app.get("/api/ps")
     async def models():

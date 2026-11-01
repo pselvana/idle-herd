@@ -1,5 +1,91 @@
 # Idle-Herd implementation status
 
+## Phase 6 — owner controls and native menu bar, November 1, 2026
+
+Implemented the scoped local control API, persistent owner modes/preferences,
+SwiftUI menu bar companion, explicit macOS user-service configuration and limited
+read-only dashboard. See [operation/API/security/limits](phase-6.md),
+[CLI/service operation](phase-6-service.md) and the
+[app build/test instructions](../../apps/macos/IdleHerdMenuBar/README.md).
+Earlier phase sections below are historical records. Next: **Phase 7**, verified
+compatible model sharing; optional Raft remains Phase 8 and Docker/Compose Phase 10.
+
+- [x] Separate read/control bearer scopes, protected provisioning, loopback/Host,
+  Origin/Fetch defenses, peer-listener route isolation and redacted status/events.
+- [x] Worker-serialized durable mode changes and grant invalidation; offline local
+  inference, paused new-inference refusal, draining existing execution and truthful
+  quarantine accounting. Explicit authorized cancellation retains unknown outcomes.
+- [x] Persistent versioned preferences, failed-commit handling, timed expiry to
+  policy-based auto, and configuration-preserving enrollment/service installation.
+- [x] MenuBarExtra local running count, telemetry/age/unknown fields, origin/worker
+  job distinctions, mode controls, cancellation, policy editing, diagnostics,
+  privacy count hiding, Keychain import and reconnect/polling behavior.
+- [x] Swift package, Xcode project/shared UI test scheme, XCTest source, executable
+  Foundation mock-client checks, unsigned local app packaging and launchd helpers.
+- [x] Native mock-process test with two concurrent jobs, UI HTTP client disconnect,
+  offline local inference, daemon restart, persistent modes and preferences.
+- [ ] Physical GUI/Quit UI, VoiceOver, Keychain prompts, Xcode UI test execution,
+  actual launchd login/logout/sleep/wake/network roam, signing/notarization,
+  real model hardware and native Linux/Windows service acceptance.
+
+### Phase 6 commands and results
+
+Host: native macOS arm64/Python 3.14.2, existing core/dev environment. `uv` below
+means `/private/tmp/idle-herd-phase0-tools/bin/uv` with
+`UV_CACHE_DIR=/private/tmp/idle-herd-phase0-uv-cache`. Native access was approved
+for mock loopback processes and inherited OS probes. No user service was registered
+or installed; no application was launched or deployment/publication performed.
+
+| Command | Result |
+|---|---|
+| `uv run --offline pytest --tb=short -q > /private/tmp/idle-herd-phase6-final-pytest.log 2>&1` | Exit 0: **2241 passed, 3 skipped, 3 warnings in 92.11s**; 2244 collected; final run includes credential-read and no-cache hardening |
+| `.venv/bin/pytest tests/test_local_control tests/test_peer/test_app.py -q --tb=short -k 'not native'` after credential/no-cache hardening | Exit 0: **48 passed, 1 deselected in 2.14s**; the native case passed in the full suite |
+| `uv run --offline pytest tests/test_peer/test_capacity_integration.py::test_remote_explicit_lease_and_single_survivor tests/test_peer/test_peer_network.py::test_native_two_peers_remote_streaming_and_survivors -q --tb=short` | Exit 0: **2 passed in 3.19s**, after fixing enrollment preferences |
+| `.venv/bin/ruff check src/` | Exit 0, all checks passed |
+| `.venv/bin/ruff format --check src/` | Exit 0, **109 files already formatted** |
+| Ruff check for new local-control tests and modified peer test files | Exit 0 |
+| `CLANG_MODULE_CACHE_PATH=/private/tmp/idle-herd-clang-cache swift build --disable-sandbox --package-path apps/macos/IdleHerdMenuBar` | Exit 0, native SwiftUI/Core/Smoke targets build |
+| `CLANG_MODULE_CACHE_PATH=/private/tmp/idle-herd-clang-cache swift run --disable-sandbox --package-path apps/macos/IdleHerdMenuBar ClientSmoke` | Exit 0: mock credential validation, URL restrictions, snapshot/disconnect/recovery and authenticated cancellation |
+| `CLANG_MODULE_CACHE_PATH=/private/tmp/idle-herd-clang-cache swift test --disable-sandbox --package-path apps/macos/IdleHerdMenuBar` | Exit 1: installed Command Line Tools have **no such module 'XCTest'**; not a passing test claim |
+| `CLANG_MODULE_CACHE_PATH=/private/tmp/idle-herd-clang-cache apps/macos/IdleHerdMenuBar/scripts/package.sh` with native build access | Exit 0; initial production build **35.24s**, then incremental rebuilds; creates ignored unsigned `apps/macos/IdleHerdMenuBar/build/Idle-Herd.app` |
+| `plutil -lint` for Xcode project and packaged app Info.plist; `xmllint --noout` shared scheme | Exit 0, syntax validation only; no Xcode build/UI test execution |
+| `git diff --check`; branch check | Exit 0; work stays directly on `main` |
+
+An early restricted focused run had denied native socket binds and incomplete
+test-double interfaces. A development full run before the enrollment fix reported
+9 failures, 2230 passes and 3 skips. Enrollment/maintenance was incorrectly saving
+its default policy, overriding the actual daemon's configured peer policy. Only
+explicit owner preference patches now persist overrides, and a regression test
+covers reopening after enrollment. All assertions remain; the final full run is
+the result above. Three optional ONNX skips and inherited coroutine warnings remain,
+as does pytest-asyncio's fixture-loop deprecation. Five inherited telemetry schema
+tests may contact their public schema endpoint; `uv --offline` is not process-wide
+network isolation. Swift emitted restricted user-cache warnings but built; no
+cache access warning was recast as a passing XCTest run.
+
+The full suite reruns prior native N=1/2/3 survival/partition/fencing scenarios.
+New signed-peer tests prove stale grants cannot evade modes through either peer
+RPC or localhost. Local slot counts remain worker-authoritative; cluster reachability
+is advisory and remote slot indications remain unknown when unmeasured. No future
+model transfer, Raft or container acceptance is claimed. The native UI-client close
+test proves service separation at the API/process boundary, not physical GUI clicks.
+Default Keychain access and launch-at-login UI use require real signed/installed
+macOS acceptance. Windows ACL enforcement and hardware activity remain unverified.
+
+### Phase 6 changed files
+
+New source: `src/fleet_manager/local_control/{auth,models,router,dashboard,service}.py`
+and package initializer. Modified runtime: `cli/peer_cli.py` and
+`peer/{app,models,local_ledger,network,discovery,capacity,waiters,job_service,replication}.py`.
+The menu app's `Package.swift`, Xcode project/shared scheme, Swift Core/App/Smoke
+sources, XCTest/UI test sources, README, ignore rules and packaging script live in
+`apps/macos/IdleHerdMenuBar/`. Tests: new `tests/test_local_control/` and updates to
+`tests/test_peer/{native_runner,test_capacity_view,test_job_replication,test_job_service,test_waiters}.py`.
+Documentation: this status, `phase-6.md`, `phase-6-service.md`, `api.md`,
+`ui-and-controls.md`, `development.md`, `security.md`, and root plan/README/AGENTS/CLAUDE.
+Root `.gitignore` excludes Swift build state. MIT attribution and legacy ingress
+surfaces remain; no worktree, release, real backend deployment or container change.
+
 ## Phase 5 — durable jobs and acknowledged replicas, November 1, 2026
 
 `idle-herd` now serves origin-local persistent jobs and opt-in authenticated peer

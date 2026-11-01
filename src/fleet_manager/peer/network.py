@@ -186,6 +186,13 @@ class PeerRPC:
         )
         nonce = headers["x-idle-nonce"]
         scope["idle_herd_verified_nonce"] = nonce
+        if not await self.local.state.ledger.cluster_participating() and path not in {
+            "/peer/v1/inspect",
+            "/peer/v1/release",
+        }:
+            # Existing streams finish, and their owners can inspect/release.
+            # No exchange, replica admission, capacity, or new execution offline.
+            raise AdmissionError("manual_offline", 503)
         if path in {"/peer/v1/jobs/store", "/peer/v1/jobs/fetch"}:
             from fleet_manager.peer.replication import FetchRequest, StoreRequest
 
@@ -205,7 +212,7 @@ class PeerRPC:
 
             query = CapacityQuery.model_validate_json(body)
             result = await self.local.state.ledger.capacity(
-                normalize_model_name(query.model), "background", query.idle_only
+                normalize_model_name(query.model), "background", query.idle_only, peer=True
             )
         elif path.endswith("acquire"):
             spec = AcquireRequest.model_validate_json(body)
@@ -218,7 +225,7 @@ class PeerRPC:
                     "workload": "background",
                 }
             )
-            result = await self.local.state.ledger.acquire(spec)
+            result = await self.local.state.ledger.acquire(spec, peer=True)
         else:
             spec = Execution.model_validate_json(body)
             lease = await self.local.state.ledger.inspect(spec.token)
@@ -331,6 +338,7 @@ class OriginDispatch:
                     return await self.app(scope, receive, send)
                 if peer is None:
                     return await self.app(scope, receive, send)
+                await self.local.state.ledger.require_dispatch()
                 body = await read_body(receive, MAX_INFERENCE_BODY - 4096)
                 try:
                     payload = json.loads(body)
@@ -343,6 +351,8 @@ class OriginDispatch:
                 await self._execute(peer, lease, scope, payload, receive, send, lease.request_id)
                 return
             if directory is None:
+                return await self.app(scope, receive, send)
+            if (await self.local.state.ledger.mode_state()).mode in {"offline", "paused"}:
                 return await self.app(scope, receive, send)
             body = await read_body(receive, MAX_INFERENCE_BODY - 4096)
             replacement = body_receiver(body, receive)
@@ -406,6 +416,7 @@ class OriginDispatch:
             )
 
     async def _acquire(self, peer, spec):
+        await self.local.state.ledger.require_dispatch()
         path = "/peer/v1/acquire"
         identity = self.local.state.identity
         body = spec.model_dump_json().encode()
@@ -438,6 +449,7 @@ class OriginDispatch:
             return lease
 
     async def _execute(self, peer, lease, scope, payload, receive, send, request_id):
+        await self.local.state.ledger.require_dispatch()
         identity = self.local.state.identity
         path = "/peer/v1/execute"
         body = (

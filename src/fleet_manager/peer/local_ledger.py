@@ -11,7 +11,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiosqlite
+from pydantic import ValidationError
 
+from fleet_manager.local_control.models import (
+    ModeState,
+    ModeUpdate,
+    PreferencesState,
+    PreferencesUpdate,
+    PreferencesValues,
+)
 from fleet_manager.peer.models import (
     AcquireRequest,
     AdmissionError,
@@ -76,6 +84,8 @@ class LocalLedger:
                     state TEXT NOT NULL, observed_at REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS peer_nonces (
                     nonce TEXT PRIMARY KEY, expires_at REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS control_state (
+                    key TEXT PRIMARY KEY, body TEXT NOT NULL);
             """)
             # Upgrade Phase 1/2 ledgers without changing fences or execution state.
             columns = {
@@ -90,8 +100,24 @@ class LocalLedger:
                 await self._db.execute(
                     "ALTER TABLE leases ADD COLUMN idle_only INTEGER NOT NULL DEFAULT 0"
                 )
+            for name, declaration in {
+                "peer_origin": "INTEGER NOT NULL DEFAULT 0",
+                "created_at": "REAL NOT NULL DEFAULT 0",
+                "updated_at": "REAL NOT NULL DEFAULT 0",
+            }.items():
+                if name not in columns:
+                    await self._db.execute(f"ALTER TABLE leases ADD COLUMN {name} {declaration}")
+            # Older peer grants are recognizable by their authenticated namespace.
+            await self._db.execute("UPDATE leases SET peer_origin=1 WHERE request_id LIKE 'peer/%'")
             await self._db.commit()
             async with self._transaction():
+                await self._db.execute(
+                    "INSERT OR IGNORE INTO control_state VALUES ('mode',?)",
+                    (ModeState(mode="auto", revision=0).model_dump_json(),),
+                )
+                await self._mode_in_transaction()
+                preferences = await self._preferences_in_transaction()
+                self._apply_preferences(preferences.values)
                 await self._db.execute(
                     "INSERT OR IGNORE INTO identity VALUES (1,?,?)",
                     (str(uuid.uuid4()), str(uuid.uuid4())),
@@ -160,6 +186,137 @@ class LocalLedger:
             except aiosqlite.IntegrityError as exc:
                 raise AdmissionError("replayed_peer_request", 403) from exc
 
+    async def _mode_in_transaction(self) -> ModeState:
+        row = await (
+            await self._db.execute("SELECT body FROM control_state WHERE key='mode'")
+        ).fetchone()
+        state = ModeState.model_validate_json(row[0])
+        if state.expires_at is not None and state.expires_at <= time.time():
+            state = ModeState(mode="auto", revision=state.revision + 1)
+            await self._db.execute(
+                "UPDATE control_state SET body=? WHERE key='mode'", (state.model_dump_json(),)
+            )
+            self._lease_changed = True
+        return state
+
+    async def mode_state(self) -> ModeState:
+        async with self._transaction():
+            return await self._mode_in_transaction()
+
+    async def _require_mode(self, *, peer: bool = False, dispatch: bool = False):
+        mode = (await self._mode_in_transaction()).mode
+        if (
+            mode == "paused"
+            or (peer and mode in {"draining", "offline"})
+            or (dispatch and mode == "offline")
+        ):
+            raise AdmissionError("manual_" + mode, 503)
+
+    async def require_dispatch(self):
+        """Fence each new outbound acquisition/execution using current owner mode."""
+        async with self._transaction():
+            await self._require_mode(dispatch=True)
+
+    async def cluster_participating(self) -> bool:
+        # Pause retains discovery/diagnostics but cannot issue or dispatch work.
+        return (await self.mode_state()).mode != "offline"
+
+    async def set_mode(self, spec: ModeUpdate) -> ModeState:
+        async with self._transaction():
+            previous = await self._mode_in_transaction()
+            deadline = spec.expires_at
+            if spec.duration_seconds is not None:
+                deadline = time.time() + spec.duration_seconds
+            if deadline is not None and (spec.mode == "auto" or deadline <= time.time()):
+                raise AdmissionError("invalid_mode_expiry", 422)
+            state = ModeState(mode=spec.mode, expires_at=deadline, revision=previous.revision + 1)
+            await self._db.execute(
+                "UPDATE control_state SET body=? WHERE key='mode'", (state.model_dump_json(),)
+            )
+            # Invalidate grants under the same lock as consumption. Running and
+            # quarantined executions retain all budgets; mode changes never cancel.
+            if spec.mode != "auto":
+                condition = "" if spec.mode == "paused" else " AND peer_origin=1"
+                rows = await (
+                    await self._db.execute(
+                        "SELECT * FROM leases WHERE state='reserved'" + condition
+                    )
+                ).fetchall()
+                for row in rows:
+                    await self._event(Lease(**dict(row)), "released")
+            self._lease_changed = True
+            return state
+
+    async def _preferences_in_transaction(self) -> PreferencesState:
+        row = await (
+            await self._db.execute("SELECT body FROM control_state WHERE key='preferences'")
+        ).fetchone()
+        if row:
+            return PreferencesState.model_validate_json(row[0])
+        values = PreferencesValues(
+            **{name: getattr(self.settings, name) for name in PreferencesValues.model_fields}
+        )
+        # Enrollment and offline recovery also open this ledger. Merely opening
+        # it must not freeze their default policies over the later daemon config.
+        # Only an explicit owner PATCH creates a durable preference override.
+        return PreferencesState(version=1, values=values)
+
+    def _apply_preferences(self, values: PreferencesValues):
+        for name, value in values.model_dump().items():
+            setattr(self.settings, name, value)
+            setattr(self.policy.settings, name, value)
+        # Every settings change requires a fresh idle recovery window.
+        self.policy._since.clear()
+        self.policy._ready.clear()
+
+    async def preferences(self) -> PreferencesState:
+        async with self._transaction():
+            return await self._preferences_in_transaction()
+
+    get_preferences = preferences
+
+    async def update_preferences(self, patch: PreferencesUpdate) -> PreferencesState:
+        async with self._transaction():
+            previous = await self._preferences_in_transaction()
+            if patch.expected_version != previous.version:
+                raise AdmissionError("preferences_version_conflict", 409)
+            updates = patch.values.model_dump(exclude_unset=True)
+            if not updates or any(value is None for value in updates.values()):
+                raise AdmissionError("invalid_preferences", 422)
+            try:
+                combined = previous.values.model_dump() | updates
+                PeerSettings.model_validate(self.settings.model_dump() | combined)
+                values = PreferencesValues.model_validate(combined)
+            except ValidationError as exc:
+                raise AdmissionError("invalid_preferences", 422) from exc
+            state = PreferencesState(version=previous.version + 1, values=values)
+            await self._db.execute(
+                "INSERT OR REPLACE INTO control_state VALUES ('preferences',?)",
+                (state.model_dump_json(),),
+            )
+            self._lease_changed = True
+        # Apply only a durably committed update, without yielding to new admission.
+        self._apply_preferences(values)
+        return state
+
+    async def job_summaries(self):
+        from fleet_manager.local_control.models import WorkerLease
+
+        async with self._transaction():
+            await self._expire()
+            return [
+                WorkerLease(
+                    job_id=item.reservation_id,
+                    state=item.state,
+                    model=item.model,
+                    workload=item.workload,
+                    peer_origin=item.peer_origin,
+                    created_at=item.created_at,
+                    updated_at=item.updated_at,
+                )
+                for item in await self._occupied()
+            ]
+
     async def _occupied(self) -> list[Lease]:
         rows = await (
             await self._db.execute(f"SELECT * FROM leases WHERE state IN {OCCUPIED}")
@@ -169,15 +326,17 @@ class LocalLedger:
     async def _event(self, lease: Lease, state: str):
         self._lease_changed = True
         await self._db.execute(
-            "UPDATE leases SET state=? WHERE reservation_id=?", (state, lease.reservation_id)
+            "UPDATE leases SET state=?,updated_at=? WHERE reservation_id=?",
+            (state, time.time(), lease.reservation_id),
         )
         await self._db.execute(
             "INSERT INTO events(reservation_id,state,observed_at) VALUES (?,?,?)",
             (lease.reservation_id, state, time.time()),
         )
 
-    async def acquire(self, spec: AcquireRequest) -> Lease:
+    async def acquire(self, spec: AcquireRequest, *, peer: bool = False) -> Lease:
         async with self._transaction():
+            await self._require_mode(peer=peer)
             await self._expire()
             row = await (
                 await self._db.execute(
@@ -191,6 +350,7 @@ class LocalLedger:
                     or lease.ttl_ms != spec.ttl_ms
                     or lease.workload != spec.workload
                     or lease.idle_only != spec.idle_only
+                    or lease.peer_origin != peer
                 ):
                     raise AdmissionError("idempotency_conflict")
                 if lease.worker_incarnation == self.incarnation and lease.state == "reserved":
@@ -236,6 +396,9 @@ class LocalLedger:
                 memory_gb=fit.required_gb,
                 workload=spec.workload,
                 idle_only=spec.idle_only,
+                peer_origin=peer,
+                created_at=time.time(),
+                updated_at=time.time(),
             )
             fields = lease.model_dump()
             await self._db.execute(
@@ -273,6 +436,7 @@ class LocalLedger:
         async with self._transaction():
             await self._expire()
             lease = await self._authenticate(token)
+            await self._require_mode(peer=lease.peer_origin)
             if lease.state != "reserved" or lease.expires_at <= time.time():
                 raise AdmissionError("reservation_not_active")
             if lease.model != model:
@@ -338,12 +502,21 @@ class LocalLedger:
             await self._event(lease, "released" if stopped else "quarantined")
 
     async def capacity(
-        self, model: str, workload: Workload = "interactive", idle_only: bool = False
+        self,
+        model: str,
+        workload: Workload = "interactive",
+        idle_only: bool = False,
+        *,
+        peer: bool = False,
     ) -> Capacity:
         async with self._transaction():
             await self._expire()
             occupied = await self._occupied()
             reason = None
+            try:
+                await self._require_mode(peer=peer)
+            except AdmissionError as exc:
+                reason = exc.reason
             try:
                 fit = await self.fit_check(model)
                 remaining_gb = fit.available_gb - sum(item.memory_gb for item in occupied)
@@ -353,6 +526,8 @@ class LocalLedger:
             decision = await self.policy.decision(workload, idle_only)
             if not decision.eligible:
                 reason, memory_slots = reason or decision.reason, 0
+            if reason:
+                memory_slots = 0
             available = max(
                 0,
                 min(

@@ -26,7 +26,11 @@ def capacity():
 
 @pytest.mark.asyncio
 async def test_local_and_offline_capacity_are_honest():
-    ledger = SimpleNamespace(capacity=AsyncMock(return_value=capacity()), cluster_id="cluster")
+    ledger = SimpleNamespace(
+        capacity=AsyncMock(return_value=capacity()),
+        cluster_id="cluster",
+        cluster_participating=AsyncMock(return_value=True),
+    )
     app = SimpleNamespace(state=SimpleNamespace(ledger=ledger, directory=None))
     view = await cluster_capacity(app, "test")
     assert (view.known_nodes, view.reachable_nodes, view.busy) == (1, 1, False)
@@ -116,7 +120,11 @@ def peer_app(remote, *, reachable=True, descriptor=True):
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     app = SimpleNamespace(
         state=SimpleNamespace(
-            ledger=SimpleNamespace(capacity=AsyncMock(return_value=local), cluster_id="cluster"),
+            ledger=SimpleNamespace(
+                capacity=AsyncMock(return_value=local),
+                cluster_id="cluster",
+                cluster_participating=AsyncMock(return_value=True),
+            ),
             directory=directory,
             identity=identity,
             peer_client=client,
@@ -175,7 +183,11 @@ async def test_failed_or_unknown_peer_is_partial(unknown):
 async def test_complete_busy_and_stale_local_sample():
     local = capacity()
     local.observed_available_slots = 0
-    ledger = SimpleNamespace(capacity=AsyncMock(return_value=local), cluster_id="cluster")
+    ledger = SimpleNamespace(
+        capacity=AsyncMock(return_value=local),
+        cluster_id="cluster",
+        cluster_participating=AsyncMock(return_value=True),
+    )
     app = SimpleNamespace(state=SimpleNamespace(ledger=ledger, directory=None))
     assert (await cluster_capacity(app, "test")).busy is True
     local.observed_available_slots = 2

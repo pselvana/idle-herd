@@ -82,6 +82,8 @@ class JobReplication:
         return [s.descriptor for s in directory.snapshot() if s.reachable and s.descriptor]
 
     async def _rpc(self, peer, path: str, request: BaseModel, response_type):
+        if not await self.local.state.ledger.cluster_participating():
+            raise AdmissionError("manual_offline", 503)
         identity = self.local.state.identity
         body = request.model_dump_json().encode()
         if len(body) > MAX_INFERENCE_BODY:
@@ -115,6 +117,8 @@ class JobReplication:
         return ack.worker_id
 
     async def _probe_origin(self, peer, job_id):
+        if not await self.local.state.ledger.cluster_participating():
+            raise AdmissionError("manual_offline", 503)
         path = "/peer/v1/jobs/fetch"
         body = FetchRequest(job_id=job_id).model_dump_json().encode()
         identity = self.local.state.identity
@@ -221,6 +225,8 @@ class JobReplication:
             raise ValueError("takeover delay must be between 1 and 3600 seconds")
         if self.local.state.identity is None or self.local.state.directory is None:
             return
+        if not await self.local.state.ledger.cluster_participating():
+            return
         journal = self.journal
         async with journal._lock:
             db = journal._conn()
@@ -305,6 +311,11 @@ class JobReplication:
                         await journal.transition(record.job_id, "retry_pending")
 
     async def may_run(self, record) -> bool:
+        if (
+            record.origin_id != self.local.state.ledger.worker_id
+            and not await self.local.state.ledger.cluster_participating()
+        ):
+            return False
         identity = self.local.state.identity
         if identity is None:
             return record.origin_id == self.local.state.ledger.worker_id

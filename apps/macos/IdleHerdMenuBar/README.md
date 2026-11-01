@@ -1,0 +1,31 @@
+# Idle-Herd menu bar
+
+Requires macOS 13 or later and Swift 5.9 or later. Run `swift test` and
+`scripts/package.sh`, then open `build/Idle-Herd.app`. The package script
+creates an unsigned local development app; distribution signing and notarization
+are not provided. Start the daemon separately. In Preferences, import the
+owner-only `~/.idle-herd/control-credentials.json` file (or the corresponding
+file in `IDLE_HERD_DATA_DIR`) into Keychain. The app never starts or stops the
+daemon. The app connects only to `127.0.0.1:11435`.
+
+The UI polls status alongside the event stream, and shows disconnected/stale
+when the daemon cannot be reached. The displayed cluster view is an estimate.
+Unsupported metrics and future model transfers appear as unknown. Login launch
+uses macOS Service Management and may require a signed installed app.
+
+`ClientSmoke` is a Foundation-only mock transport check for authenticated
+snapshot, disconnect, and recovery: `swift run ClientSmoke`. The included Xcode project and shared scheme configure the app and UI test
+host. On a Mac with full Xcode, run:
+
+```sh
+xcodebuild -project IdleHerdMenuBar.xcodeproj -scheme IdleHerdMenuBar -destination 'platform=macOS' test
+```
+
+The UI test uses a debug-only in-process mock selected by
+`IDLE_HERD_UI_TESTING=1`; it does not verify real daemon continuity. The Xcode
+project and UI test have not been built or run on this Command Line Tools-only
+host.
+
+Open Dashboard opens the local read-only dashboard. Paste the daemon's read
+credential into the dashboard when prompted; it stays in the page's memory and
+is not placed in the URL. Closing the page discards it.

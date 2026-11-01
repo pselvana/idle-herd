@@ -96,7 +96,19 @@ async def test_cancel_running_is_unknown_and_keeps_worker_quarantined(tmp_path, 
         )
         job_id = accepted.json()["job_id"]
         await asyncio.wait_for(backend.entered.wait(), 5)
-        response = await client.delete("/v1/jobs/" + job_id)
+        assert (await client.delete("/v1/jobs/" + job_id)).status_code == 401
+        assert (
+            await client.delete(
+                "/v1/jobs/" + job_id,
+                headers={"Authorization": "Bearer " + app.state.control_credentials.read_token},
+            )
+        ).status_code == 403
+        response = await client.delete(
+            "/v1/jobs/" + job_id,
+            headers={
+                "Authorization": "Bearer " + app.state.control_credentials.control_token,
+            },
+        )
         assert response.status_code == 200, response.text
         assert response.json()["state"] == "unknown_outcome"
         await asyncio.sleep(1.3)
@@ -108,12 +120,17 @@ async def test_cancel_running_is_unknown_and_keeps_worker_quarantined(tmp_path, 
 
 
 async def test_cancel_queued_and_missing_result(tmp_path, monkeypatch):
-    async with peer(tmp_path, monkeypatch) as (_, client, backend):
+    async with peer(tmp_path, monkeypatch) as (app, client, backend):
         result = await client.post(
             "/v1/jobs", json=submission(execution_policy={"idle_only": True})
         )
         job_id = result.json()["job_id"]
-        canceled = await client.delete("/v1/jobs/" + job_id)
+        canceled = await client.delete(
+            "/v1/jobs/" + job_id,
+            headers={
+                "Authorization": "Bearer " + app.state.control_credentials.control_token,
+            },
+        )
         assert canceled.json()["state"] == "canceled"
         assert (await client.get("/v1/jobs/" + job_id + "/result")).status_code == 409
         assert (await client.get("/v1/jobs/missing")).status_code == 404

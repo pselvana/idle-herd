@@ -851,12 +851,19 @@ Real-model, power-loss and Linux/Windows service acceptance remain unverified.
 
 ### Phase 6 — Native macOS menu bar app and local owner controls
 
-- [ ] Implement `GET /v1/node/status`, `GET /v1/node/jobs`, `GET /v1/node/events`, `PUT /v1/node/mode`, `GET /v1/node/diagnostics`, `GET/PATCH /v1/node/preferences`, and authorized cancel commands; create explicit local control/read-only auth scopes.
-- [ ] Implement persistent `auto`, `draining`, `offline`, `paused` state machine. **Offline stops cluster participation but preserves localhost inference**; paused rejects new inference. Apply mode before gossip and reject stale remote reservations.
-- [ ] Create native SwiftUI `MenuBarExtra` macOS app; show running jobs/busy icon, backend and resource usage, peers/reachability, transfer status, idle eligibility reason, and service health. Use a snapshot + local SSE stream with polling fallback.
-- [ ] Provide `Automatic`, `Drain`, `Offline`, `Pause`, `Offline for 1 hour`, `Back to Auto`, and `Open dashboard` actions. All actions use the daemon's local management API and provide error feedback.
-- [ ] Integrate `launchd` user service + launch-at-login preferences; UI closing must leave daemon running. Protect local mode controls with scoped credentials; don't expose them on peer listener.
-- [ ] Unit-test state transitions, TTL expiry, service restarts and user-active conflicts; add XCTest UI tests and integration tests using a mocked local API, including UI disconnected/reconnect state.
+- [x] Implement `GET /v1/node/status`, `GET /v1/node/jobs`, `GET /v1/node/events`, `PUT /v1/node/mode`, `GET /v1/node/diagnostics`, `GET/PATCH /v1/node/preferences`, and authorized cancel commands; create explicit local control/read-only auth scopes.
+- [x] Implement persistent `auto`, `draining`, `offline`, `paused` state machine. **Offline stops cluster participation but preserves localhost inference**; paused rejects new inference. Apply mode before gossip and reject stale remote reservations.
+- [x] Create native SwiftUI `MenuBarExtra` macOS app; show running jobs/busy icon, backend and resource usage, peers/reachability, idle eligibility reason, and service health. Use a snapshot + local SSE stream with polling fallback; transfers remain explicitly unsupported until Phase 7.
+- [x] Provide `Automatic`, `Drain`, `Offline`, `Pause`, `Offline for 1 hour`, return-to-auto, and `Open dashboard` actions. All actions use the daemon's local management API and provide error feedback.
+- [x] Implement `launchd` user service + launch-at-login preferences, independent UI lifetime and scoped loopback controls. Real launchd/login/sleep lifecycle acceptance remains unverified.
+- [x] Unit/integration tests for state transitions, TTL expiry, service restarts and user-active conflicts; XCTest client/UI test sources and a Foundation mock API smoke test for disconnected/reconnect state.
+- [ ] Execute XCTest/UI automation with a full Xcode host and verify the physical macOS menu, Keychain, login/logout and sleep/wake lifecycle on hardware.
+
+Implementation, exact test evidence and limits: [Phase 6](docs/idle-herd/phase-6.md)
+and [status](docs/idle-herd/implementation-status.md). Swift compiles; this host
+has Command Line Tools without XCTest. Native mock processes verify two running
+jobs survive a UI client's disconnect, local inference while offline, and daemon
+restart persistence. This is not physical Quit UI or real-model acceptance.
 
 **Acceptance:** On one Mac, the menu bar shows an active job and real local stats (unknown where sensors unsupported). Toggling Offline immediately prevents peer admissions but localhost inference continues; existing running jobs finish by default. When daemon or UI restarts, settings and service behavior are correct. Remote peer loss does not freeze the UI.
 
@@ -1169,11 +1176,11 @@ limitations rather than treating roadmap guarantees as implemented behavior.
 - OpenAI Codex VS Code extension: https://marketplace.visualstudio.com/items?itemName=OpenAI.chatgpt
 - Codex IDE workflow: https://learn.chatgpt.com/docs/codex/ide
 
-**Revision:** November 1, 2026 (v9). Records Phase 0–5 implementation,
+**Revision:** November 1, 2026 (v10). Records Phase 0–6 implementation,
 including worker-local idle policy, native sensor interfaces, origin capacity waits
 and durable jobs with acknowledged peer copies. Hardware sensor
 and backend acceptance and documented recovery/fit limits remain explicit.
-Phases 6–10 remain future work; optional Raft stays outside inference and
+Physical GUI/service acceptance and Phases 7–10 remain future work; optional Raft stays outside inference and
 Docker/Compose stays in Phase 10. Any upstream guidance suggesting an always-on
 router or mandatory Raft must be interpreted using current §§0–4, 8–9, 11–12.
 

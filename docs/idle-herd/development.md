@@ -1,6 +1,6 @@
 # Native development, build and test paths
 
-Phases 1–5 retain Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
+Phases 1–6 retain Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
 and commands `herd` / `herd-node`, and adds `idle-herd` single-node ingress.
 Run `uv run idle-herd` with separately managed local Ollama on port 11434;
 ingress binds 127.0.0.1:11435. See [runtime/configuration/recovery](phase-1.md).
@@ -10,7 +10,9 @@ Phase 4 adds [capacity views, bounded waiters and the Python helper](phase-4.md)
 Phase 5 adds [durable job APIs and acknowledged replica recovery](phase-5.md).
 Sensor tests mock native APIs and helpers; native process fixtures inject synthetic
 signals. They do not verify physical activity or hardware thermal/power behavior.
-There is no SwiftUI project, Go sidecar or native installer yet.
+Phase 6 adds [local owner controls and the SwiftUI menu bar](phase-6.md), plus
+explicit macOS user launchd configuration. The app has a Swift package and Xcode
+project/shared UI-test scheme. No Go sidecar or packaged native installer exists.
 See [verification](implementation-status.md)
 for the actual host/results and [upstream audit](upstream-audit.md) for limitations.
 Docker/Compose is Phase 10 only; it is not a development prerequisite.
@@ -52,7 +54,22 @@ Targeted native test paths:
 uv run pytest tests/test_node/ --tb=short -q
 uv run pytest tests/test_server/ --tb=short -q
 uv run pytest tests/test_models/ tests/test_common/ --tb=short -q
+uv run pytest tests/test_local_control/ --tb=short -q
 ```
+
+For macOS app builds and mock-client checks:
+
+```sh
+swift build --package-path apps/macos/IdleHerdMenuBar
+swift run --package-path apps/macos/IdleHerdMenuBar ClientSmoke
+swift test --package-path apps/macos/IdleHerdMenuBar
+apps/macos/IdleHerdMenuBar/scripts/package.sh
+```
+
+XCTest and UI automation require full Xcode; see the app README for its shared
+scheme command. A Command Line Tools-only Swift installation can build/run the
+Foundation smoke target but may lack XCTest. Packaging produces an unsigned local
+development app, without signing/notarization or installing a daemon service.
 
 `./scripts/health.sh` is an existing Bash wrapper for tests, lint, formatting,
 documentation counts and a network-dependent CVE audit. Its historical count

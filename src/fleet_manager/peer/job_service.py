@@ -58,6 +58,8 @@ class JobService:
                 self._submit_locks.pop(key, None)
 
     async def _submit(self, spec):
+        if (await self.local.state.ledger.mode_state()).mode == "paused":
+            raise AdmissionError("manual_paused", 503)
         record, _ = await self.journal.submit(spec, self.local.state.ledger.worker_id)
         if not record.accepted:
             acks = []
@@ -136,6 +138,9 @@ class JobService:
     async def _loop(self):
         while True:
             try:
+                if (await self.local.state.ledger.mode_state()).mode == "paused":
+                    await asyncio.sleep(0.25)
+                    continue
                 for record in await self.journal.list_runnable():
                     if len(self._tasks) >= 16:
                         break
@@ -187,6 +192,9 @@ class JobService:
                     lease = await self.local.state.waiters.acquire(acquisition)
                     break
                 except AdmissionError as exc:
+                    if exc.reason in {"manual_paused", "manual_offline"}:
+                        await asyncio.sleep(0.25)
+                        continue
                     if exc.reason != "capacity_wait_timeout":
                         raise
             await self.journal.bind_attempt(
@@ -310,6 +318,9 @@ async def get_job(job_id: str, request: Request):
 
 @router.delete("/v1/jobs/{job_id}")
 async def cancel_job(job_id: str, request: Request):
+    from fleet_manager.local_control.auth import authorize
+
+    authorize(request, control=True)
     return (await request.app.state.jobs.cancel(job_id)).summary()
 
 

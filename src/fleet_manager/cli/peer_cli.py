@@ -5,14 +5,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
+import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
 
+import httpx
 import typer
 import uvicorn
 
+from fleet_manager.local_control import service
+from fleet_manager.local_control.auth import load_or_create_credentials
 from fleet_manager.peer.app import create_peer_app, create_peer_rpc_app
 from fleet_manager.peer.identity import (
     DeviceCredential,
@@ -220,6 +225,161 @@ def reconcile(confirm_backend_stopped: bool = typer.Option(False, "--confirm-bac
 
     asyncio.run(repair())
     typer.echo("Recorded backend-stop attestation; quarantined leases released.")
+
+
+service_cli = typer.Typer(help="Manage the macOS per-user launchd service.")
+cli.add_typer(service_cli, name="service")
+
+
+def _control_request(method: str, endpoint: str, payload: dict | None = None):
+    try:
+        credentials = load_or_create_credentials(PeerSettings().data_dir, create=False)
+        token = credentials.read_token if method == "GET" else credentials.control_token
+        with httpx.Client(timeout=10.0, trust_env=False) as client:
+            response = client.request(
+                method,
+                f"http://127.0.0.1:11435/v1/node/{endpoint}",
+                headers={"Authorization": f"Bearer {token}"},
+                json=payload,
+            )
+        if response.is_error:
+            typer.echo(f"Local control request failed (HTTP {response.status_code}).", err=True)
+            raise typer.Exit(1)
+        typer.echo(json.dumps(response.json(), indent=2))
+    except (OSError, KeyError, ValueError, httpx.HTTPError):
+        typer.echo(
+            "Cannot access local control API or credentials; is the daemon running?", err=True
+        )
+        raise typer.Exit(1) from None
+
+
+@cli.command()
+def status():
+    """Show authenticated local daemon status."""
+    _control_request("GET", "status")
+
+
+@cli.command()
+def jobs():
+    """List local jobs."""
+    _control_request("GET", "jobs")
+
+
+@cli.command()
+def doctor():
+    """Show local diagnostics."""
+    _control_request("GET", "diagnostics")
+
+
+@cli.command("cancel")
+def cancel_local_job(job_id: str):
+    """Request cancellation of an origin-owned durable job; outcome may remain unknown."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", job_id):
+        raise typer.BadParameter("invalid job ID")
+    _control_request("POST", f"jobs/{job_id}/cancel")
+
+
+@cli.command()
+def preferences(
+    values: str = typer.Option(None, "--set", help="JSON object of preference values."),
+    expected_version: int = typer.Option(None, "--expected-version", min=0),
+):
+    """Read preferences or update them with an expected version."""
+    if values is None:
+        if expected_version is not None:
+            raise typer.BadParameter("--expected-version requires --set")
+        _control_request("GET", "preferences")
+        return
+    if expected_version is None:
+        raise typer.BadParameter("--set requires --expected-version")
+    try:
+        parsed = json.loads(values)
+        if not isinstance(parsed, dict):
+            raise ValueError
+    except ValueError:
+        raise typer.BadParameter("--set must be a JSON object") from None
+    _control_request(
+        "PATCH", "preferences", {"expected_version": expected_version, "values": parsed}
+    )
+
+
+def _duration(value: str) -> int:
+    match = re.fullmatch(r"([1-9][0-9]*)(s|m|h|d)", value)
+    if not match:
+        raise typer.BadParameter("duration must be a positive number followed by s, m, h, or d")
+    seconds = int(match.group(1)) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[match.group(2)]
+    if seconds > 604800:
+        raise typer.BadParameter("duration cannot exceed seven days")
+    return seconds
+
+
+@cli.command()
+def offline(duration: str = typer.Option(None, "--for", help="Temporary override, e.g. 1h.")):
+    """Withdraw from the cluster while retaining localhost inference."""
+    payload = {"mode": "offline"}
+    if duration is not None:
+        payload["duration_seconds"] = _duration(duration)
+    _control_request("PUT", "mode", payload)
+
+
+@cli.command()
+def auto():
+    """Return to automatic idle policy."""
+    _control_request("PUT", "mode", {"mode": "auto"})
+
+
+@cli.command()
+def drain():
+    """Drain remote work while retaining local inference."""
+    _control_request("PUT", "mode", {"mode": "draining"})
+
+
+@cli.command()
+def pause():
+    """Reject new inference while existing work drains."""
+    _control_request("PUT", "mode", {"mode": "paused"})
+
+
+def _service_action(action):
+    try:
+        result = action()
+        if result:
+            typer.echo(result)
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        typer.echo(f"Service operation failed: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+
+@service_cli.command("install")
+def service_install():
+    """Write a launch agent without starting or registering it."""
+    settings = PeerSettings()
+    _service_action(lambda: service.install(settings.data_dir, settings=settings))
+
+
+@service_cli.command("enable")
+def service_enable():
+    """Enable launch at login and register the installed agent."""
+    _service_action(service.enable)
+
+
+@service_cli.command("disable")
+def service_disable():
+    """Disable launch at login and unload the user service."""
+    _service_action(service.disable)
+
+
+@service_cli.command("start")
+@cli.command("start")
+def service_start():
+    """Start the registered user service."""
+    _service_action(service.start)
+
+
+@service_cli.command("status")
+def service_status():
+    """Inspect launchd registration and process state."""
+    _service_action(service.status)
 
 
 def main():

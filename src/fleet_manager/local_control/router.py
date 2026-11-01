@@ -1,0 +1,312 @@
+"""Authenticated local owner API. Mount only on the loopback ingress app."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import re
+import subprocess
+import sys
+import time
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+
+from fleet_manager.local_control import service
+from fleet_manager.local_control.auth import authorize
+from fleet_manager.local_control.models import (
+    BackendStatus,
+    Diagnostics,
+    Event,
+    IdleStatus,
+    JobCounts,
+    JobsResponse,
+    JobSummary,
+    ModeState,
+    ModeUpdate,
+    NodeStatus,
+    PeerCounts,
+    PreferencesState,
+    PreferencesUpdate,
+    ResourceStatus,
+    ServiceState,
+    ServiceUpdate,
+    SlotStatus,
+    WorkerLease,
+)
+from fleet_manager.peer.jobs import JobConflict
+
+
+def _model_name(value: str) -> str:
+    # Local model paths can expose user directories; ordinary registry names remain useful.
+    if value.startswith(("/", "~", "\\")) or (len(value) > 2 and value[1:3] in (":/", ":\\")):
+        return "[local model]"
+    return value
+
+
+def create_router() -> APIRouter:
+    def require_read(request: Request):
+        authorize(request)
+
+    service_lock = asyncio.Lock()
+    router = APIRouter(
+        prefix="/v1/node", tags=["local owner controls"], dependencies=[Depends(require_read)]
+    )
+
+    async def summaries(request: Request) -> JobsResponse:
+        records = await request.app.state.job_journal.list_jobs()
+        return JobsResponse(
+            jobs=[
+                JobSummary(
+                    job_id=record.job_id,
+                    state=record.state,
+                    model=_model_name(record.submission.model),
+                    created_at=record.created_at,
+                    updated_at=record.updated_at,
+                    cancel_requested=record.cancel_requested,
+                    worker_id=record.attempts[-1].worker_id if record.attempts else None,
+                )
+                for record in records
+                if record.origin_id == request.app.state.ledger.worker_id
+            ],
+            worker_leases=[
+                WorkerLease.model_validate(item).model_copy(
+                    update={"model": _model_name(WorkerLease.model_validate(item).model)}
+                )
+                for item in await request.app.state.ledger.job_summaries()
+            ],
+        )
+
+    async def snapshot(request: Request) -> NodeStatus:
+        state = request.app.state
+        mode = ModeState.model_validate(await state.ledger.mode_state())
+        jobs = await summaries(request)
+        leases = jobs.worker_leases
+        decision = await state.idle_policy.decision("background")
+        peers = state.directory.snapshot() if state.directory else []
+        node = state.registry.get_node(state.ledger.worker_id)
+        signal = decision.signal
+        if mode.mode != "auto":
+            decision = decision.model_copy(
+                update={
+                    "eligible": False,
+                    "reason": "manual_" + mode.mode,
+                    "state": "ineligible",
+                }
+            )
+        backend_state = (
+            "unknown" if node is None else ("offline" if node.status == "offline" else "online")
+        )
+
+        def count(name):
+            return sum(
+                (item.state if hasattr(item, "state") else item["state"]) == name for item in leases
+            )
+
+        return NodeStatus(
+            worker_id=state.ledger.worker_id,
+            mode=mode,
+            observed_at=time.time(),
+            idle=IdleStatus(
+                **decision.model_dump(
+                    include={
+                        "workload",
+                        "policy",
+                        "eligible",
+                        "reason",
+                        "state",
+                        "activity",
+                        "observed_at",
+                    }
+                )
+            ),
+            resources=ResourceStatus(
+                cpu_percent=signal.cpu_percent,
+                gpu_percent=signal.gpu_percent,
+                memory_available_gb=signal.memory_available_gb,
+                memory_total_gb=node.memory.total_gb if node and node.memory else None,
+                memory_pressure=signal.memory_pressure,
+                on_ac=signal.on_ac,
+                battery_percent=signal.battery_percent,
+                thermal_state=signal.thermal_state,
+                observed_at=signal.observed_at,
+                source=signal.source,
+            ),
+            backend=BackendStatus(
+                state=backend_state,
+                models_available=[_model_name(m) for m in node.ollama.models_available]
+                if node and node.ollama
+                else [],
+                models_loaded=[_model_name(m.name) for m in node.ollama.models_loaded]
+                if node and node.ollama
+                else [],
+                observed_at=node.last_heartbeat if node else None,
+            ),
+            slots=SlotStatus(
+                total=state.ledger.settings.slots,
+                occupied=len(leases),
+                reserved=count("reserved"),
+                running=count("running"),
+                quarantined=count("quarantined"),
+            ),
+            peers=PeerCounts(
+                known=len(peers),
+                stale=sum(mode.mode == "offline" or not p.reachable for p in peers),
+                reachable=sum(mode.mode != "offline" and p.reachable for p in peers),
+                unreachable=sum(mode.mode == "offline" or not p.reachable for p in peers),
+            ),
+            jobs=JobCounts(
+                queued=sum(j.state in {"queued", "reserving", "retry_pending"} for j in jobs.jobs),
+                running=sum(j.state == "running" for j in jobs.jobs),
+                total=len(jobs.jobs),
+            ),
+        )
+
+    @router.get("/status", response_model=NodeStatus)
+    async def status(request: Request):
+        authorize(request)
+        return await snapshot(request)
+
+    @router.get("/jobs", response_model=JobsResponse)
+    async def jobs(request: Request):
+        authorize(request)
+        return await summaries(request)
+
+    @router.post("/jobs/{job_id}/cancel", response_model=JobSummary)
+    async def cancel(job_id: str, request: Request):
+        authorize(request, control=True)
+        try:
+            record = await request.app.state.jobs.cancel(job_id)
+        except JobConflict as exc:
+            raise HTTPException(409, "job cannot be canceled") from exc
+        return JobSummary(
+            job_id=record.job_id,
+            state=record.state,
+            model=_model_name(record.submission.model),
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            cancel_requested=record.cancel_requested,
+            worker_id=record.attempts[-1].worker_id if record.attempts else None,
+        )
+
+    @router.put("/mode", response_model=ModeState)
+    async def mode(spec: ModeUpdate, request: Request):
+        authorize(request, control=True)
+        return await request.app.state.ledger.set_mode(spec)
+
+    @router.get("/preferences", response_model=PreferencesState)
+    async def preferences(request: Request):
+        authorize(request)
+        return await request.app.state.ledger.preferences()
+
+    @router.patch("/preferences", response_model=PreferencesState)
+    async def update_preferences(spec: PreferencesUpdate, request: Request):
+        authorize(request, control=True)
+        if any(value is None for value in spec.values.model_dump(exclude_unset=True).values()):
+            raise HTTPException(422, "preference values cannot be null")
+        return await request.app.state.ledger.update_preferences(spec)
+
+    @router.get("/diagnostics", response_model=Diagnostics)
+    async def diagnostics(request: Request):
+        authorize(request)
+        status = await snapshot(request)
+        return Diagnostics(
+            peer_discovery="enabled" if request.app.state.directory else "disabled",
+            peer_error=bool(request.app.state.peer_error),
+            quarantined_slots=status.slots.quarantined,
+        )
+
+    def service_state() -> ServiceState:
+        if sys.platform != "darwin":
+            return ServiceState(
+                supported=False, platform="unsupported", installed=None, enabled=None, running=None
+            )
+        installed = service.plist_path().is_file()
+        enabled = None
+        running = None
+        domain = f"gui/{os.getuid()}"
+        try:
+            disabled = service._launchctl("print-disabled", domain).stdout
+            match = re.search(
+                r'"' + re.escape(service.LABEL) + r'"\s*=>\s*(enabled|disabled)', disabled
+            )
+            if match:
+                enabled = match.group(1) == "enabled"
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            pass
+        try:
+            output = service.status()
+            match = re.search(r"\bstate\s*=\s*(running|waiting|exited)\b", output)
+            if match:
+                running = match.group(1) == "running"
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            pass
+        return ServiceState(
+            supported=True, platform="macos", installed=installed, enabled=enabled, running=running
+        )
+
+    @router.get("/service", response_model=ServiceState)
+    async def get_service(request: Request):
+        authorize(request)
+        return await asyncio.to_thread(service_state)
+
+    @router.put("/service", response_model=ServiceState)
+    async def set_service(spec: ServiceUpdate, request: Request):
+        authorize(request, control=True)
+        if sys.platform != "darwin":
+            raise HTTPException(501, "login service is unavailable on this platform")
+        async with service_lock:
+            try:
+                if spec.enabled:
+                    await asyncio.to_thread(
+                        service.install,
+                        request.app.state.ledger.settings.data_dir,
+                        settings=request.app.state.ledger.settings,
+                    )
+                domain = f"gui/{os.getuid()}/{service.LABEL}"
+                await asyncio.to_thread(
+                    service._launchctl, "enable" if spec.enabled else "disable", domain
+                )
+                return await asyncio.to_thread(service_state)
+            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                raise HTTPException(503, "login service configuration failed") from exc
+
+    @router.get("/events")
+    async def events(request: Request):
+        authorize(request)
+
+        async def stream():
+            # No replay cursor is trusted: each connection begins with a fresh snapshot.
+            previous = None
+            while not await request.is_disconnected():
+                current = await snapshot(request)
+                comparison = current.model_dump(
+                    exclude={"observed_at": True, "idle": {"observed_at"}}
+                )
+                kind = "snapshot" if previous is None else "heartbeat"
+                if previous is not None:
+                    for field, event_type in (
+                        ("mode", "mode"),
+                        ("jobs", "job"),
+                        ("slots", "capacity"),
+                        ("idle", "idle"),
+                        ("peers", "peer"),
+                    ):
+                        if comparison[field] != previous[field]:
+                            kind = event_type
+                            break
+                event = Event(
+                    id=str(uuid.uuid4()), type=kind, observed_at=time.time(), data=current
+                )
+                yield f"id: {event.id}\nevent: {kind}\ndata: {event.model_dump_json()}\n\n"
+                previous = comparison
+                await asyncio.sleep(1)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
+    return router

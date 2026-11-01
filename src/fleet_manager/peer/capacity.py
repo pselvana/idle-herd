@@ -100,6 +100,7 @@ async def cluster_capacity(
     local = await local_app.state.ledger.capacity(model, workload, idle_only)
     directory = local_app.state.directory
     snapshots = directory.snapshot() if directory else []
+    participating = await local_app.state.ledger.cluster_participating()
     # A worker may move endpoints while its old discovery record remains. Choose
     # one direct observation per identity; unknown endpoints remain distinct.
     unique = {}
@@ -111,7 +112,7 @@ async def cluster_capacity(
             unique[key] = status
     statuses = list(unique.values())
     query = CapacityQuery(model=model, workload=workload, idle_only=idle_only)
-    candidates = [s for s in statuses if s.reachable and s.descriptor is not None]
+    candidates = [s for s in statuses if participating and s.reachable and s.descriptor is not None]
     results = await asyncio.gather(
         *(asyncio.wait_for(_remote(local_app, s.descriptor, query), timeout=5) for s in candidates),
         return_exceptions=True,

@@ -1,6 +1,11 @@
-# Local UI and controls: planned contract
+# Local UI and controls: Phase 6 contract
 
-**Phase 0 design only.** No SwiftUI app, peer mode API or event stream is claimed to exist. The future macOS `MenuBarExtra` is an optional client of the daemon's versioned authenticated loopback management API. CLI and UI share this API; the daemon owns policy, persistence, sensor observation, reservations and job lifecycle. Quitting or crashing the UI leaves daemon and work running. Windows/Linux retain CLI/API parity; tray clients are optional later work.
+Phase 6 implements the optional macOS `MenuBarExtra`, authenticated peer-local
+mode API, preferences and redacted SSE. See [runtime operation and limits](phase-6.md)
+and [test evidence](implementation-status.md). CLI and UI share the versioned
+loopback API; the daemon owns policy, persistence, sensors, reservations and jobs.
+UI lifetime is independent. Windows/Linux retain CLI/API parity; tray clients
+remain optional. The layout below is the product mock, not a hardware screenshot.
 
 | Mode | New remote admissions | Local-origin dispatch to peers | New local interactive inference | Existing work |
 |---|---|---|---|---|
@@ -23,6 +28,25 @@ Cluster (reachable estimate): 2 reachable · 1 stale · ~4 remote slots
 [Jobs] [Models] [Dashboard] [Diagnostics] [Quit UI]
 ```
 
-The proposed local status, jobs, events, mode, cancel and diagnostics interfaces use scoped credentials stored in a platform credential store and loopback-only management; loopback alone is not authorization. Authenticate subscriptions and writes, enforce scopes and origin/CSRF protections, and never place credentials in URLs. Privileged control commands must be cryptographically authenticated; scoped bearer credentials are the current API draft, while provisioning, rotation and replay defenses require review before implementation. No prompt, completion, secret or private path belongs in default status events or the menu. The [OpenAPI draft](openapi.yaml) defines the canonical event envelope: `version`, `id` (matching SSE `id`), `type`, `scope`, `observed_at` and redacted typed `data`. Node identity is in local snapshot data. Event types include job, mode, capacity, idle, transfer and peer-reachability changes. Reconnect obtains a fresh authoritative local snapshot; a disconnected daemon must never appear live based on stale cached state. See [ADR 005](adr-005-daemon-ui-and-native-sequence.md) for service ownership and native sequencing.
+The local status, jobs, events, mode, cancel and diagnostics interfaces require
+scoped bearer credentials; loopback alone does not authorize them. The daemon
+provisions protected distinct read/control credentials and the macOS client imports
+control into Keychain. CLI reads enforce the same file ownership/link/permission
+checks. Origin/Fetch defenses reject browser control writes and cross-origin
+reads. Secrets never belong in URLs. Rotation currently requires a stopped daemon
+and credential reimport; live revocation is future work. No prompt, completion,
+secret or private path belongs in default status/events. The version 1 envelope
+uses `version`, `id` (matching SSE ID), `type`, `scope`, `observed_at` and typed
+redacted `data`; runtime `/openapi.json` describes actual fields, while the YAML
+retains future extensions. Events include job, mode, capacity, idle and peer
+changes. Model transfers remain Phase 7. Reconnect obtains a fresh snapshot;
+a disconnected daemon never appears live from cached state. See
+[ADR 005](adr-005-daemon-ui-and-native-sequence.md) for service ownership.
 
-Future acceptance: toggle offline during a remote reservation and verify immediate rejection while existing work drains and localhost inference continues. Paused rejects new local inference. Quit UI during two jobs and verify daemon/CLI continuity. Restart daemon and confirm disconnected/reconnecting state and authenticated snapshot recovery. Expire offline while the owner is active and verify auto remains ineligible for idle-only work. Reject unauthenticated and cross-origin mode writes. Verify accessible labels and reduced-motion behavior without relying on color or animation; inspect status/events/logs for sensitive content.
+Automated acceptance covers stale peer reservations during mode changes,
+offline local inference, pause, timed expiry while the owner is active, service
+restart persistence, scope/CSRF rejection and redaction. Native tests disconnect
+a UI HTTP client during two jobs and verify daemon continuity. Swift builds and
+a mocked status/disconnect/recovery client smoke test runs. Actual menu clicks,
+physical Quit UI, VoiceOver, Keychain and OS login/sleep lifecycle need a full
+Xcode/hardware acceptance run; XCTest sources are not evidence of execution.

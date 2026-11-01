@@ -152,7 +152,7 @@ async def refresh_local(app: FastAPI):
 
 
 class LocalBoundary:
-    """Loopback and browser-origin boundary; no administrative control API yet."""
+    """Loopback and browser-origin boundary for local inference and scoped controls."""
 
     def __init__(self, app, local):
         self.app = app
@@ -193,8 +193,21 @@ class LocalBoundary:
         marker = binding.set(
             RequestBinding(token=token, workload=workload, idle_only=idle_only == "true")
         )
+
+        async def private_send(message):
+            if message["type"] == "http.response.start":
+                message = dict(message)
+                message["headers"] = [
+                    (key, value)
+                    for key, value in message.get("headers", [])
+                    if key.lower() != b"cache-control"
+                ] + [(b"cache-control", b"no-store")]
+            await send(message)
+
         try:
-            await self.app(scope, receive, send)
+            await self.app(
+                scope, receive, private_send if scope["path"].startswith("/v1/node/") else send
+            )
         finally:
             binding.reset(marker)
 
@@ -217,6 +230,11 @@ def create_peer_app(
             await ledger.open()
             stack.push_async_callback(ledger.close)
             data_dir = str(Path(settings.data_dir).expanduser())
+            from fleet_manager.local_control.auth import load_or_create_credentials
+
+            app.state.control_credentials = await asyncio.to_thread(
+                load_or_create_credentials, data_dir
+            )
             server_settings = ServerSettings(
                 data_dir=data_dir,
                 host="127.0.0.1",
@@ -310,6 +328,7 @@ def create_peer_app(
                     )
                     stack.push_async_callback(directory.close)
                     await directory.open()
+                    directory.participating = ledger.cluster_participating
                     app.state.identity = identity
                     app.state.directory = directory
                     app.state.peer_client = httpx.AsyncClient(
@@ -402,13 +421,24 @@ def create_peer_app(
     from fleet_manager.peer.job_service import router as jobs_router
 
     app.include_router(jobs_router)
+    from fleet_manager.local_control.router import create_router
+
+    app.include_router(create_router())
+    from fleet_manager.local_control.dashboard import router as dashboard_router
+
+    app.include_router(dashboard_router)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request, exc):
-        if request.url.path == "/v1/jobs":
+        if request.url.path == "/v1/jobs" or request.url.path.startswith("/v1/node/"):
             # Validation inputs can contain entire prompts and tool arguments.
-            await trace_failure(app, "invalid_job_request")
-            return JSONResponse(status_code=422, content={"error": {"type": "invalid_job_request"}})
+            reason = (
+                "invalid_job_request"
+                if request.url.path == "/v1/jobs"
+                else "invalid_control_request"
+            )
+            await trace_failure(app, reason)
+            return JSONResponse(status_code=422, content={"error": {"type": reason}})
         from fastapi.exception_handlers import request_validation_exception_handler
 
         return await request_validation_exception_handler(request, exc)
