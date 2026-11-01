@@ -1,10 +1,14 @@
 # Idle-Herd — Implementation Plan
 
-> **Status:** Revised availability-first engineering plan for a fork of [geeks-accelerator/ollama-herd](https://github.com/geeks-accelerator/ollama-herd).  
+> **Status:** Phase 0 design/audit complete; Phases 1–10 unimplemented. Runtime retains upstream's router and node agent. See [verification and remaining risks](docs/idle-herd/implementation-status.md).
 > **Prepared:** November 1, 2026  
 > **Primary development environment:** Visual Studio Code + OpenAI Codex IDE extension  
 > **Target:** Cross-platform, peer-to-peer, idle-aware independent LLM inference; no dedicated inference router; **fully functional with 1, 2, or 3+ intermittently connected nodes and no guaranteed Raft quorum**.
-> **Revision:** 3 — native-first development, macOS menu bar companion, optional cross-platform tray, Dockerization moved to the final phase; retains quorum-free worker-local scheduling.
+> **Revision:** 4 — incorporates Phase 0 audit, validated API draft and baseline evidence; preserves native-first sequencing and quorum-free worker-local scheduling.
+
+This file, `IDLE-HERD_IMPLEMENTATION_PLAN.md`, is the canonical implementation plan.
+The architecture below describes the target system; completed design work does not
+mean its runtime guarantees have been implemented or tested.
 
 ## 0. Executive summary and availability contract
 
@@ -68,6 +72,15 @@ Do not implement automatic Raft self-bootstrap or silently shrink a voter set af
 
 Upstream: https://github.com/geeks-accelerator/ollama-herd (MIT). Its published structure includes:
 
+**Phase 0 checkout:** Ollama Herd 0.12.2 at
+`66460f0909f20637bb4afe50bf7e872bc348dacb`, recorded in
+[`UPSTREAM_BASE_COMMIT.txt`](UPSTREAM_BASE_COMMIT.txt). The
+[actual API/backend and boundary audit](docs/idle-herd/upstream-audit.md) supersedes
+assumptions about the checked-out source. It also records wildcard binds,
+unauthenticated management paths, default-on external telemetry and native
+lifecycle gaps that remain in the inherited runtime. The checkout has no GitHub
+Actions workflows; baseline commands were run directly.
+
 | Upstream file / subsystem | Reuse / planned change |
 |---|---|
 | `src/fleet_manager/server/app.py` | Convert router FastAPI factory to a per-peer API factory; keep compatible routes. |
@@ -75,7 +88,7 @@ Upstream: https://github.com/geeks-accelerator/ollama-herd (MIT). Its published 
 | `server/queue_manager.py` | Split local execution queues from cluster-wide reservations; preserve backend concurrency limits. |
 | `server/streaming.py` | Keep request proxying and SSE/NDJSON conversion; target reserved peer instead of centrally selected router worker. |
 | `server/registry.py` | Rework from in-memory router registry into a local authenticated best-effort peer view; only a target worker is authoritative for its own admission. |
-| `server/routes/openai_compat.py`, `ollama_compat.py` | Maintain external request contracts. Route via local peer coordinator. |
+| `server/routes/openai_compat.py`, `ollama_compat.py`, `anthropic_compat.py`, `responses_compat.py` | Maintain existing OpenAI/Ollama, Anthropic Messages and OpenAI Responses contracts. Route via local peer coordinator. |
 | `server/routes/fleet.py`, `dashboard.py` | Adapt fleet status and dashboard to cluster state and decentralized ingress. |
 | `node/agent.py`, `collector.py` | Combine node agent with local API process; retain cross-platform collectors and add host-integrated idle sensors. |
 | `node/capacity_learner.py` | Keep as optional prediction signal, **not** as a replacement for immediate idle admission. |
@@ -92,9 +105,10 @@ Upstream instructions: `AGENTS.md`, `CLAUDE.md`, `docs/fleet-manager-routing-eng
 git clone git@github.com:YOUR_USERNAME/idle-herd.git
 cd idle-herd
 git remote add upstream https://github.com/geeks-accelerator/ollama-herd.git
+# Pin once when creating a new fork; preserve the existing pin in this checkout.
 git rev-parse HEAD > UPSTREAM_BASE_COMMIT.txt
 
-git switch -c feat/idle-herd-foundation
+git switch main
 uv sync --extra dev
 uv run pytest
 uv run ruff check src/
@@ -106,7 +120,8 @@ code .
 - Propose new command `idle-herd` and background process `idle-herd-daemon` (name optional); do not rename every internal Python import in Phase 1.
 - Extend upstream root `AGENTS.md` with Idle-Herd-specific rules; don't erase existing developer instructions.
 - Add architectural decision records (ADRs) for consensus, idle detection, lease semantics, and model replication.
-- Do one small feature branch / PR per phase; keep baseline upstream tests green.
+- Keep each phase reviewable and baseline upstream tests green. Follow `AGENTS.md`:
+  work directly on main, without worktrees; do not create a feature branch here.
 
 ---
 
@@ -420,8 +435,8 @@ The macOS menu bar app and CLI use the **same local management API**. The peer d
 | `paused` | **No** | **No** | **No new inference jobs** | Running work finishes by default unless user explicitly cancels |
 
 - `offline` means **cluster-disconnected**, not network-device-offline and not a kill switch. Keep localhost health/status/settings and locally requested inference available; do not auto-send local requests to remote peers. `paused` is the explicit no-new-inference mode. The UI must show this distinction.
-- All transitions apply at the local worker **before** being gossiped; stale remote peers cannot override offline/draining/paused. Pending reservations are invalidated/declined according to fencing and lease policy; running jobs follow configured graceful-drain behavior.
-- `PUT /v1/node/mode` accepts an optional `expires_at` or `duration_seconds` for a temporary override (e.g., offline for one hour). Persist until expiry/reboot according to user policy; default manual `offline` stays in effect across service restarts. On expiry, return to `auto`, not forced available.
+- All transitions apply at the local worker **before** being gossiped, under the same serialization as lease consumption; stale remote peers cannot override offline/draining/paused. Deny or invalidate unconsumed peer reservations for offline/draining and unconsumed local plus peer reservations for paused. Recheck mode on consumption so a previously issued local token cannot bypass pause. Running jobs retain resource accounting until confirmed complete and follow configured graceful-drain behavior.
+- `PUT /v1/node/mode` accepts either a future `expires_at` or positive `duration_seconds` for a temporary non-auto override (e.g., offline for one hour), never both. Reject timed `auto` and past/present expiry. Persist the absolute deadline and apply expiry on restart before admission. Default manual `offline` stays in effect across service restarts. On expiry, return to policy-based `auto`, not forced available.
 - Administrative operations require a separate local control credential (macOS Keychain for the menu app; scoped secret for CLI; protected file permissions or platform credential store). **Loopback binding alone is not sufficient authorization.** Disable cross-origin browser access by default and defend against CSRF; never expose control endpoints on the peer RPC listener. Read-only telemetry may use a less privileged scoped token.
 - `GET /v1/node/status` reports authoritative **local** admission and running-job counts, with timestamps and resource sampling provenance. Cluster totals are separately marked `reachable_estimate`; no omniscient live-cluster count is implied. Redact prompt and completion bodies, path secrets and credentials from the tray by default.
 - `GET /v1/node/events` uses SSE with heartbeat, event IDs/reconnect, and snapshot-on-reconnect; the menu app uses backoff polling as a fallback if SSE is unavailable. Event payloads and error contracts are versioned and tested.
@@ -733,13 +748,23 @@ The MVP should implement items 1, 2, and 8 as part of idle admission/peer reliab
 
 ### Phase 0 — Verify upstream and lock failure contracts
 
-- [ ] Fork Ollama Herd; pin upstream commit; run existing CI/tests and note all supported APIs/backends.
-- [ ] Inspect actual router/node boundaries; identify reusable streaming proxy, scorer, queue, model logic and telemetry.
-- [ ] Write ADRs for symmetric peers, Raft-free admission, node churn, ID/credential handling, job durability, and local daemon/UI separation; explicitly pin Docker to Phase 10.
-- [ ] Define invariants in tests: N=1 works, loss of all coordination services doesn't stop local work, per-worker overbooking impossible, no false globally authoritative capacity.
-- [ ] Define security boundary and peer enrollment; prevent accidental exposure of unauthenticated endpoints.
+- [x] Audit the fork, pin the starting checkout, run baseline checks and inventory actual APIs/backends. See [audit](docs/idle-herd/upstream-audit.md) and [evidence](docs/idle-herd/implementation-status.md).
+- [x] Inspect actual router/node boundaries; identify reusable streaming proxy, scorer, queue, model logic and telemetry.
+- [x] Draft ADRs for symmetric peers, Raft-free admission, node churn, ID/credential handling, job durability and local daemon/UI separation; explicitly pin Docker to Phase 10. See [architecture and ADRs](docs/idle-herd/architecture.md).
+- [x] Define future invariant scenarios in [the declarative test specification](tests/contracts/idle_herd.feature): N=1, coordination loss, survivor availability, no overbooking and advisory capacity. These scenarios have no step definitions and do not prove runtime behavior yet.
+- [x] Define [security boundaries and enrollment requirements](docs/idle-herd/security.md), including protection against accidental unauthenticated exposure. Runtime enforcement remains future work; inherited exposure is documented in the audit.
+- [x] Draft and validate [OpenAPI](docs/idle-herd/openapi.yaml), [local UI/mode contracts](docs/idle-herd/ui-and-controls.md), and [native development/build/test paths](docs/idle-herd/development.md).
 
 **Acceptance:** Baseline passes; OpenAPI changes drafted; an ADR explicitly rejects Raft-global leases and explains why.
+
+**Recorded result (November 1, 2026):** native macOS arm64/Python 3.14.2 baseline
+passed after three test-isolation fixes: **1,982 passed, 3 optional ONNX skips,
+3 inherited warnings**. Source lint/format, wheel/sdist build and OpenAPI 3.1
+validation passed. Five inherited tests fetch a public telemetry schema; the
+suite is not entirely offline. No live inference, Linux/Windows native lifecycle
+or future peer guarantees were verified. Full commands, initial sandbox failures
+and limitations are in [implementation status](docs/idle-herd/implementation-status.md).
+The next implementation phase is Phase 1; all later checkboxes remain pending.
 
 ### Phase 1 — Production-capable **single-node mode**
 
@@ -931,9 +956,13 @@ Production Compose must have separate secrets for node enrollment, CA and peer a
 - Root `IDLE-HERD_IMPLEMENTATION_PLAN.md`: maintained architectural plan and phase roadmap.
 - Root `AGENTS.md`: add fork invariants while preserving upstream instructions.
 - `docs/idle-herd/adr-*.md`: rationale for worker-owned leases, optional Raft, partition behavior, job replication and recovery.
-- `docs/idle-herd/api.md`: versioned OpenAPI source of truth with scope/freshness semantics.
+- `docs/idle-herd/openapi.yaml`: validated draft OpenAPI source for capacity/local controls; future endpoints, not implemented routes.
+- `docs/idle-herd/api.md`: contract explanation, scope/freshness, authentication, retry and event semantics.
+- `docs/idle-herd/upstream-audit.md`: actual checked-out boundaries, APIs/backends and inherited risks.
+- `docs/idle-herd/architecture.md`, `security.md`, `development.md`: architecture/ADR index, threat boundaries and native build/test paths.
 - `docs/idle-herd/implementation-status.md`: phase checkboxes, PR links and test evidence.
-- `docs/idle-herd/ui-and-controls.md`: mode semantics, menu bar mock, event schema, privacy/accessibility, signed local control commands, UI test plan.
+- `docs/idle-herd/ui-and-controls.md`: mode semantics, menu bar mock, event schema, privacy/accessibility, authenticated local control commands and UI test plan.
+- `tests/contracts/idle_herd.feature`: future phase-specific acceptance scenarios; not executed by pytest.
 - `apps/macos/IdleHerdMenuBar/`: SwiftUI app, optional native sensor connector, XCTests and packaging files (introduced Phase 6).
 
 ---
@@ -1073,7 +1102,7 @@ Idle-Herd guarantees only the following conditional property: **when at least on
 
 1. Should every peer automatically become a worker? **Default: yes when backend compatible and local policy allows; otherwise ingress-only.**
 2. Should `idle_only` be required on laptops and `utilization_only` on Docker/headless systems? **Default: host-aware auto selection with conservative unknown-state behavior and explicit opt-in policy.**
-3. How long should wait requests last? **Default: bounded 60-second wait and 120-second maximum configurable; durable jobs for longer waits.**
+3. How long should wait requests last? **Default: bounded 60-second wait, draft protocol maximum 120 seconds; deployments may configure a lower limit. Increasing the protocol maximum requires contract review. Use durable jobs for longer waits.**
 4. How many copies before a job is called `replicated`? **Default: local + one verified durable replica; when one node only, reject replicated request unless caller explicitly downgrades.**
 5. May a replica autonomously take over a running job when origin disappears? **Default: retry-safe jobs only, explicit possible-duplicate acknowledgement.**
 6. Which backends first? **Ollama GGUF, then MLX on Apple Silicon, then Docker Model Runner/OCI; retain upstream additional backend support.**
@@ -1086,7 +1115,11 @@ Idle-Herd guarantees only the following conditional property: **when at least on
 
 ## 13. References and verification notes
 
-**This document is an updated implementation specification, not a claim that the fork has been modified or tested.** Actual upstream module locations and dependency APIs must be checked by Codex against the pinned fork commit.
+**This document is the implementation specification and Phase 0 progress record.**
+Only the Phase 0 results explicitly linked above are verified; the remaining
+architecture and milestones describe future work. Consult the pinned-checkout
+audit and implementation status for actual source locations, test evidence and
+limitations rather than treating roadmap guarantees as implemented behavior.
 
 - Ollama Herd upstream repository, platform/backend support and current router+node architecture: https://github.com/geeks-accelerator/ollama-herd
 - Ollama Herd coding-agent notes: https://github.com/geeks-accelerator/ollama-herd/blob/main/AGENTS.md
@@ -1100,7 +1133,7 @@ Idle-Herd guarantees only the following conditional property: **when at least on
 - OpenAI Codex VS Code extension: https://marketplace.visualstudio.com/items?itemName=OpenAI.chatgpt
 - Codex IDE workflow: https://learn.chatgpt.com/docs/codex/ide
 
-**Revision:** November 1, 2026 (v3). Preserves quorum-free, worker-local reservations and single-survivor availability, introduces native macOS menu bar controls and local mode/status endpoints, and moves all Dockerization to final Phase 10. Optional Raft remains noncritical to inference. Any upstream guidance suggesting an always-on router or mandatory Raft must be interpreted using current §§0–4, 8–9, 11–12.
+**Revision:** November 1, 2026 (v4). Records Phase 0 completion, the pinned checkout and native baseline; links audited source boundaries, ADRs, validated OpenAPI and native development paths. Aligns the mode-consumption race, timed overrides, wait cap and main-branch workflow with Phase 0 decisions. Phases 1–10 remain unimplemented; optional Raft stays outside inference and Docker/Compose stays in Phase 10. Any upstream guidance suggesting an always-on router or mandatory Raft must be interpreted using current §§0–4, 8–9, 11–12.
 
 **End of plan.**
 

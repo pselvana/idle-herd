@@ -311,10 +311,14 @@ def test_statuses_standalone_reports_single_node():
 @pytest.mark.asyncio
 async def test_start_fails_when_distributed_and_launch_missing():
     sup = MlxSupervisor(model="m", backend="ring", hosts="10.0.0.2", pipeline=True)
-    with patch(
-        "fleet_manager.node.mlx_supervisor.find_mlx_lm_binary",
-        return_value="/bin/mlx_lm.server",
-    ), patch(_FIND_LAUNCH, return_value=None):
+    with (
+        patch(
+            "fleet_manager.node.mlx_supervisor.find_mlx_lm_binary",
+            return_value="/bin/mlx_lm.server",
+        ),
+        patch(_FIND_LAUNCH, return_value=None),
+        patch("fleet_manager.node.mlx_supervisor.find_orphan_mlx_pids_on_port", return_value=[]),
+    ):
         result = await sup.start()
     assert result is False
     assert sup._status == "stopped"

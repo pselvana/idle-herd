@@ -3686,3 +3686,22 @@ nohup uv run herd >/tmp/herd.out 2>/tmp/herd.err & disown
 **Fix:** `_detect_images` now matches a superset of image content-part types (`image_url`, `image`, `input_image`) plus the Ollama `images[]` sibling array, and skips non-dict messages defensively. Because this detector gates the guard, a type it misses silently disables the protection — so the set is deliberately broad. Verified end-to-end after the fix: a vision request now serves via `gemma3:27b` ("Red." on a red PNG) instead of falling back to gpt-oss.
 
 **Also, as immediate mitigation:** `gemma3:27b` pinned (`POST /fleet/pin`) so the benchmark churn stops evicting it. The eviction is what exposed the detector gap — with the vision model always warm, the fallback path isn't reached; the fix ensures that when it *is* reached, it fails cleanly rather than as a raw Ollama 400.
+
+
+---
+
+## FIXED — Phase 0 test isolation leaked into host state (Idle-Herd, 2026-11-01)
+
+**Severity:** Medium, development safety/reproducibility. The original sandbox
+baseline found a telemetry payload test opening the real user trace directory,
+a mocked text-embedding load creating the real cache directory, and a missing
+MLX launcher test reaching actual orphan-process scanning. These tests now inject
+`tmp_path` storage or mock orphan discovery; assertions and production code are
+unchanged. Native rerun: 1982 passed, 3 optional ONNX skips, 3 inherited warnings.
+See [exact verification and remaining risks](idle-herd/implementation-status.md).
+
+**Still open:** the upstream suite includes real sockets/kernel probes and five
+remote telemetry schema tests, despite onboarding's fully offline claim. Current
+wildcard binds, unauthenticated management routes and default-on telemetry are
+audited inherited behavior, not repaired by the Phase 0 security draft. Future
+Idle-Herd admission/security work must address them within its assigned phases.

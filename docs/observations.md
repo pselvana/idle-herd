@@ -1905,3 +1905,19 @@ process, which is why the router was restarted before publishing.
 **And guessing has to be bounded by what the request offered.** The error does not name the tool, so recovery infers it from schemas. Two live counter-examples shaped the rule: a Write call carrying Bash's `timeout` (a field from another offered tool, safe to drop) and required fields that herd's own schema fixup had promoted (not the model's to supply). A field nobody declared stays disqualifying, because the cost of a wrong guess is a command run somewhere the model never asked for.
 
 **Also from that recording:** a laptop that joined mid-run got no requests, because IP-keyed session affinity pinned every one-shot call from the recording script to the first node. Fixed separately in `3f571a5`. Recording a demo with real clients found two bugs in one afternoon.
+
+
+## 2026-11-01: Idle-Herd Phase 0 separates baseline evidence from peer guarantees
+
+At checkout `66460f0909f20637bb4afe50bf7e872bc348dacb`, the restricted macOS arm64
+run reported 11 failed, 1966 passed and 8 skipped. Native access plus three test
+isolation fixes produced 1982 passed, 3 skipped and 3 inherited warnings. Socket
+binds, kernel/process probes and a public telemetry schema fetch explain why
+this suite is not entirely mocked/offline. Two real-home writes and an unmocked
+MLX orphan scan were isolated without changing production behavior.
+
+A green upstream baseline establishes compatibility with the checked-out tests;
+it does not establish symmetric peers, durable worker leases or last-survivor
+availability. Those are specified in the Phase 0 ADRs/API and declarative future
+acceptance scenarios. Native inference, Linux/Windows, service supervision and
+UI lifecycle remain unverified. See [the evidence and handoff](idle-herd/implementation-status.md).

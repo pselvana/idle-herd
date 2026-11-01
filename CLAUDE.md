@@ -1,5 +1,18 @@
 # CLAUDE.md
 
+## Idle-Herd fork status
+
+Phase 0 is architecture, upstream audit and native baseline verification only.
+The router/node commands and historical deployment notes below describe upstream;
+the peer runtime, leases, local mode API and SwiftUI app are not implemented.
+Follow the fork invariants in [AGENTS.md](AGENTS.md) and
+[implementation status](docs/idle-herd/implementation-status.md) before continuing.
+See [native development/build/test paths](docs/idle-herd/development.md),
+[architecture](docs/idle-herd/architecture.md) and [API draft](docs/idle-herd/api.md).
+The supplied root plan uses the filename `IDLE-HERD_IMPLEMENTATION_PLAN.md`.
+Docker/Compose is deferred to Phase 10. No publishing or local fleet deployment
+is authorized by a Phase 0 audit.
+
 ## Build & Run
 
 ```bash

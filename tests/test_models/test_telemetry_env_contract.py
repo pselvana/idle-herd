@@ -46,7 +46,7 @@ class TestNicknameReachesTheSender:
     def test_empty_means_anonymous(self):
         assert ServerSettings().herd_nickname == ""
 
-    def test_nickname_reaches_a_built_payload(self, monkeypatch):
+    def test_nickname_reaches_a_built_payload(self, monkeypatch, tmp_path):
         """End of the chain: env -> settings -> payload."""
         import asyncio
 
@@ -60,6 +60,7 @@ class TestNicknameReachesTheSender:
                 "0.9.1",
                 day="2026-08-10",
                 nickname=settings.herd_nickname,
+                data_dir=tmp_path,
             )
         )
         assert payload["nickname"] == "NeonHerd"

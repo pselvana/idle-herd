@@ -1,0 +1,626 @@
+openapi: 3.1.0
+info:
+  title: Idle-Herd prospective control and capacity API
+  version: 0.1.0-draft
+  description: |
+    Phase 0 design only. None of these routes is implemented by this draft.
+    This contract is separate from, and does not replace or change, upstream
+    Ollama, OpenAI, Anthropic, fleet, or dashboard APIs. All endpoints require
+    the specified credential by default. No server address or new port is assigned.
+    See api.md for trust boundaries, safety, retry, and stream semantics.
+security:
+  - capacityCredential: []
+tags:
+  - name: capacity
+  - name: local-node
+paths:
+  /v1/cluster/capacity:
+    get:
+      tags: [capacity]
+      operationId: getCapacity
+      summary: Inspect advisory capacity in the origin's reachable view
+      parameters:
+        - name: model
+          in: query
+          required: true
+          schema: {type: string, minLength: 1}
+        - name: idle_only
+          in: query
+          schema: {type: boolean, default: true}
+      responses:
+        '200':
+          description: Best-effort snapshot; never an admission
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CapacitySnapshot'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/capacity/acquire:
+    post:
+      tags: [capacity]
+      operationId: acquireCapacity
+      summary: Obtain one worker-issued reservation, optionally waiting
+      description: |
+        Waits are origin-local and bounded; the default is 60000 ms and the
+        maximum is 120000 ms. A live worker must admit and durably record a
+        reservation before success. Idempotency is scoped to the same origin;
+        retries across origins or partitions can produce duplicate attempts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AcquireRequest'}
+      responses:
+        '201':
+          description: Worker accepted and persisted the reservation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Reservation'}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
+        '429':
+          description: no_capacity; retry after the indicated delay
+          headers:
+            Retry-After:
+              schema: {type: integer, minimum: 0}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+        '504': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/capacity/reservations/{reservation_id}:
+    parameters:
+      - $ref: '#/components/parameters/ReservationId'
+    get:
+      tags: [capacity]
+      operationId: inspectReservation
+      summary: Inspect the issuing worker's authoritative reservation state
+      responses:
+        '200':
+          description: State confirmed by the issuing worker
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReservationStatus'}
+        '503': {$ref: '#/components/responses/WorkerUnreachable'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [capacity]
+      operationId: releaseReservation
+      summary: Request worker-authoritative reservation release
+      description: Repeated release is idempotent; a lost response or unreachable worker does not prove release.
+      responses:
+        '200':
+          description: State confirmed by the issuing worker
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReservationStatus'}
+        '503': {$ref: '#/components/responses/WorkerUnreachable'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/capacity/watch:
+    get:
+      tags: [capacity]
+      operationId: watchCapacity
+      summary: Watch changes in the origin's advisory reachable view
+      parameters:
+        - $ref: '#/components/parameters/LastEventId'
+      responses:
+        '200': {$ref: '#/components/responses/EventStream'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/node/status:
+    get:
+      tags: [local-node]
+      operationId: getNodeStatus
+      security: [{localReadCredential: []}]
+      responses:
+        '200':
+          description: Authoritative local admission and job counts; sampled metrics may be unknown
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NodeStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/node/jobs:
+    get:
+      tags: [local-node]
+      operationId: listLocalJobs
+      security: [{localReadCredential: []}]
+      responses:
+        '200':
+          description: Safe local job summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [scope, observed_at, jobs]
+                properties:
+                  scope: {const: local}
+                  observed_at: {$ref: '#/components/schemas/Timestamp'}
+                  jobs: {type: array, items: {$ref: '#/components/schemas/JobSummary'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/node/jobs/{job_id}/cancel:
+    post:
+      tags: [local-node]
+      operationId: cancelLocalJob
+      security: [{localControlCredential: []}]
+      description: Requires job ownership or explicit authorization. Cancellation is best effort and does not prove absence of side effects.
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: Confirmed cancellation or already-terminal state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CancelResult'}
+        '202':
+          description: Cancellation requested or outcome unknown
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CancelResult'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/node/events:
+    get:
+      tags: [local-node]
+      operationId: watchNodeEvents
+      security: [{localReadCredential: []}]
+      parameters:
+        - $ref: '#/components/parameters/LastEventId'
+      responses:
+        '200': {$ref: '#/components/responses/EventStream'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/node/mode:
+    put:
+      tags: [local-node]
+      operationId: setNodeMode
+      description: |
+        Mode changes and lease consumption share worker-local serialization.
+        Deny or invalidate unconsumed peer reservations for offline/draining
+        and all unconsumed reservations for paused. Recheck mode on consumption;
+        an old token cannot bypass pause. Existing execution drains by default
+        and keeps resource accounting until confirmed complete.
+      security: [{localControlCredential: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ModeUpdate'}
+      responses:
+        '200':
+          description: Locally applied mode
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ModeState'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/node/diagnostics:
+    get:
+      tags: [local-node]
+      operationId: getNodeDiagnostics
+      security: [{localReadCredential: []}]
+      responses:
+        '200':
+          description: Redacted local scheduling, backend, and sensor diagnostics
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Diagnostics'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/node/preferences:
+    get:
+      tags: [local-node]
+      operationId: getNodePreferences
+      security: [{localReadCredential: []}]
+      responses:
+        '200':
+          description: Local versioned preferences
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Preferences'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      tags: [local-node]
+      operationId: updateNodePreferences
+      security: [{localControlCredential: []}]
+      description: Atomically validate and persist the patch; reject a stale expected version with 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PreferencesPatch'}
+      responses:
+        '200':
+          description: Persisted preferences
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Preferences'}
+        '409': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    capacityCredential:
+      type: http
+      scheme: bearer
+      description: Scoped capacity access; peer RPC has separate authenticated identity and authorization.
+    localReadCredential:
+      type: http
+      scheme: bearer
+      description: Local telemetry read scope; required even on loopback.
+    localControlCredential:
+      type: http
+      scheme: bearer
+      description: Privileged local control scope; required even on loopback and never accepted as peer RPC authorization.
+  parameters:
+    ReservationId:
+      name: reservation_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    LastEventId:
+      name: Last-Event-ID
+      in: header
+      required: false
+      schema: {type: string}
+      description: Opaque cursor; reconnect always starts with a fresh snapshot.
+  responses:
+    Unauthorized:
+      description: Missing or invalid credential
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Forbidden:
+      description: Authenticated credential lacks the required scope or job authorization
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Error:
+      description: Structured error; status and code distinguish authentication, validation and operational failure
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    WorkerUnreachable:
+      description: worker_unreachable; no authoritative reservation state or release can be asserted
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    EventStream:
+      description: |
+        text/event-stream with event ID, event type and JSON data. A snapshot is
+        sent on every connection, including reconnect; heartbeat comments keep
+        the connection alive. Cursor replay is best effort, not a completeness
+        guarantee. See api.md for ordering, gaps, and resynchronization.
+      content:
+        text/event-stream:
+          schema:
+            type: string
+            description: SSE frames whose data is a JSON Event envelope.
+  schemas:
+    Timestamp: {type: string, format: date-time, description: RFC 3339 timestamp with timezone}
+    Error:
+      type: object
+      required: [version, code, message, retryable, observed_at]
+      properties:
+        version: {const: '1'}
+        code:
+          type: string
+          description: 'Examples: unauthorized, forbidden, invalid_request, idempotency_conflict, no_capacity, model_not_compatible, no_eligible_worker, no_reachable_worker, capacity_wait_timeout, reservation_invalid, reservation_expired, worker_unreachable, unknown_outcome.'
+        message: {type: string}
+        retryable: {type: boolean}
+        observed_at: {$ref: '#/components/schemas/Timestamp'}
+        next_check_ms: {type: [integer, 'null'], minimum: 0}
+        diagnostic_counters: {type: object, additionalProperties: {type: integer, minimum: 0}}
+        request_id: {type: [string, 'null']}
+    AcquireRequest:
+      type: object
+      additionalProperties: false
+      required: [model, idempotency_key]
+      properties:
+        model: {type: string, minLength: 1}
+        wait_ms: {type: integer, minimum: 0, maximum: 120000, default: 60000}
+        slots: {type: integer, const: 1, default: 1}
+        idle_only: {type: boolean, default: true}
+        idempotency_key: {type: string, minLength: 1, maxLength: 256}
+        job_class: {type: string, enum: [interactive, background], default: background}
+        context_tokens: {type: integer, minimum: 1}
+    Reservation:
+      type: object
+      example:
+        reservation_id: rsv_123
+        status: reserved
+        cluster_id: home-ai
+        worker_node_id: peer-b
+        worker_incarnation: boot-a13e
+        slot_id: 'ollama:example-model:0'
+        slot_generation: 42
+        request_id: req_123
+        model: example-model
+        expires_at: '2026-10-31T22:01:00Z'
+        reservation_token: opaque-worker-issued-secret
+      required: [reservation_id, status, cluster_id, worker_node_id, worker_incarnation, slot_id, slot_generation, request_id, model, expires_at, reservation_token]
+      properties:
+        reservation_id: {type: string}
+        status: {const: reserved}
+        cluster_id: {type: string}
+        worker_node_id: {type: string}
+        worker_incarnation: {type: string}
+        slot_id: {type: string}
+        slot_generation: {type: integer, minimum: 0}
+        request_id: {type: string}
+        model: {type: string}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+        reservation_token: {type: string, description: Opaque worker-issued secret; never log or expose in telemetry.}
+    ReservationStatus:
+      type: object
+      required: [reservation_id, worker_node_id, worker_incarnation, slot_id, slot_generation, status, observed_at]
+      properties:
+        reservation_id: {type: string}
+        worker_node_id: {type: string}
+        worker_incarnation: {type: string}
+        slot_id: {type: string}
+        slot_generation: {type: integer, minimum: 0}
+        status: {enum: [reserved, consumed, released, expired]}
+        observed_at: {$ref: '#/components/schemas/Timestamp'}
+    CapacitySnapshot:
+      type: object
+      example:
+        cluster_id: home-ai
+        model: example-model
+        scope: reachable_peers
+        observed_at: '2026-10-31T22:00:00Z'
+        stale_after_ms: 5000
+        known_nodes: 2
+        reachable_nodes: 1
+        eligible_reachable_workers: 0
+        observed_available_slots: 0
+        observed_total_eligible_slots: 0
+        busy: null
+        globally_authoritative: false
+        discovery_state: partial
+        quorum: null
+        peers:
+          - {node_id: peer-b, reachable: false, fresh: false, observed_at: null, available_slots: null}
+      required: [cluster_id, model, scope, observed_at, stale_after_ms, known_nodes, reachable_nodes, eligible_reachable_workers, observed_available_slots, observed_total_eligible_slots, busy, globally_authoritative, discovery_state, quorum, peers]
+      properties:
+        cluster_id: {type: string}
+        model: {type: string}
+        scope: {const: reachable_peers}
+        observed_at: {$ref: '#/components/schemas/Timestamp'}
+        stale_after_ms: {type: integer, minimum: 0}
+        known_nodes: {type: integer, minimum: 0}
+        reachable_nodes: {type: integer, minimum: 0}
+        eligible_reachable_workers: {type: integer, minimum: 0}
+        observed_available_slots: {type: integer, minimum: 0}
+        observed_total_eligible_slots: {type: integer, minimum: 0}
+        busy: {type: [boolean, 'null'], description: Null when the reachable view is too incomplete to assess.}
+        globally_authoritative: {const: false}
+        discovery_state: {enum: [complete_known_view, partial, unknown]}
+        quorum: {type: [boolean, 'null'], description: Null when optional coordination is disabled or unknown; never gates inference.}
+        peers:
+          type: array
+          items: {$ref: '#/components/schemas/PeerCapacity'}
+        next_check_ms: {type: [integer, 'null'], minimum: 0}
+    PeerCapacity:
+      type: object
+      required: [node_id, reachable, fresh, observed_at, available_slots]
+      properties:
+        node_id: {type: string}
+        reachable: {type: boolean}
+        fresh: {type: boolean}
+        observed_at: {anyOf: [{$ref: '#/components/schemas/Timestamp'}, {type: 'null'}]}
+        available_slots: {type: [integer, 'null'], minimum: 0, description: Null when unknown; stale or unreachable slots are excluded from totals.}
+    ModeState:
+      type: object
+      required: [mode, applied_at, expires_at]
+      properties:
+        mode: {enum: [auto, draining, offline, paused]}
+        applied_at: {$ref: '#/components/schemas/Timestamp'}
+        expires_at: {anyOf: [{$ref: '#/components/schemas/Timestamp'}, {type: 'null'}]}
+    ModeUpdate:
+      type: object
+      example: {mode: offline, duration_seconds: 3600}
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode: {enum: [auto, draining, offline, paused]}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+        duration_seconds: {type: integer, minimum: 1}
+      allOf:
+        - not: {required: [expires_at, duration_seconds]}
+        - if: {properties: {mode: {const: auto}}, required: [mode]}
+          then:
+            not:
+              anyOf:
+                - required: [expires_at]
+                - required: [duration_seconds]
+    NodeStatus:
+      type: object
+      example:
+        scope: local
+        node_id: peer-a
+        worker_incarnation: boot-7
+        observed_at: '2026-10-31T22:00:00Z'
+        mode: {mode: offline, applied_at: '2026-10-31T21:59:00Z', expires_at: null}
+        uptime_seconds: 3600
+        active_jobs: 0
+        queued_jobs: 0
+        reserved_jobs: 0
+        local_capacity: {total_slots: 1, reserved_slots: 0, running_slots: 0, available_slots: 1}
+        local_eligibility: {eligible: true, reason: local inference available}
+        remote_eligibility: {eligible: false, reason: offline mode}
+        idle_state: unknown
+        idle_sensor: {source: null, sampled_at: null}
+        health: healthy
+        resources: []
+      required: [scope, node_id, worker_incarnation, observed_at, mode, uptime_seconds, active_jobs, queued_jobs, reserved_jobs, local_capacity, local_eligibility, remote_eligibility, idle_state, idle_sensor, health, resources]
+      properties:
+        scope: {const: local}
+        node_id: {type: string}
+        worker_incarnation: {type: string}
+        observed_at: {$ref: '#/components/schemas/Timestamp'}
+        mode: {$ref: '#/components/schemas/ModeState'}
+        uptime_seconds: {type: number, minimum: 0}
+        active_jobs: {type: integer, minimum: 0}
+        queued_jobs: {type: integer, minimum: 0}
+        reserved_jobs: {type: integer, minimum: 0}
+        local_capacity:
+          type: object
+          required: [total_slots, reserved_slots, running_slots, available_slots]
+          description: Local worker slot counts at observed_at, subject to model and policy fit.
+          properties:
+            total_slots: {type: integer, minimum: 0}
+            reserved_slots: {type: integer, minimum: 0}
+            running_slots: {type: integer, minimum: 0}
+            available_slots: {type: integer, minimum: 0}
+        local_eligibility: {$ref: '#/components/schemas/Eligibility'}
+        remote_eligibility: {$ref: '#/components/schemas/Eligibility'}
+        idle_sensor:
+          type: object
+          required: [source, sampled_at]
+          properties:
+            source: {type: [string, 'null']}
+            sampled_at: {anyOf: [{$ref: '#/components/schemas/Timestamp'}, {type: 'null'}]}
+        idle_state: {enum: [idle, active, unknown]}
+        health: {enum: [healthy, degraded, unknown]}
+        resources: {type: array, items: {$ref: '#/components/schemas/ResourceSample'}}
+    Eligibility:
+      type: object
+      required: [eligible, reason]
+      properties:
+        eligible: {type: [boolean, 'null'], description: Null if eligibility cannot be determined.}
+        reason: {type: string, description: Redacted policy or resource explanation, including unknown state.}
+    ResourceSample:
+      type: object
+      required: [name, value, unit, sampled_at, source]
+      properties:
+        name: {type: string}
+        value: {type: [number, 'null']}
+        unit: {type: string}
+        sampled_at: {anyOf: [{$ref: '#/components/schemas/Timestamp'}, {type: 'null'}]}
+        source: {type: [string, 'null']}
+    JobSummary:
+      type: object
+      required: [job_id, state, origin, execution, observed_at]
+      properties:
+        job_id: {type: string}
+        attempt_id: {type: [string, 'null']}
+        model: {type: [string, 'null']}
+        state: {enum: [queued, reserving, running, retry_pending, completed, canceled, failed, unknown_outcome]}
+        origin: {enum: [local, peer, unknown], description: Where the job was submitted relative to this node.}
+        execution: {enum: [local, peer, unassigned, unknown], description: Where this attempt runs relative to this node.}
+        observed_at: {$ref: '#/components/schemas/Timestamp'}
+    CancelResult:
+      type: object
+      required: [job_id, outcome, observed_at]
+      properties:
+        job_id: {type: string}
+        outcome: {enum: [canceled, already_terminal, cancel_requested, unknown_outcome]}
+        observed_at: {$ref: '#/components/schemas/Timestamp'}
+    Diagnostics:
+      type: object
+      required: [scope, observed_at, findings]
+      properties:
+        scope: {const: local}
+        observed_at: {$ref: '#/components/schemas/Timestamp'}
+        findings:
+          type: array
+          items:
+            type: object
+            required: [code, state, message, source, observed_at]
+            properties:
+              code: {type: string}
+              state: {enum: [ok, warning, error, unknown]}
+              message: {type: string, description: Redacted and safe for local display.}
+              source: {type: [string, 'null']}
+              observed_at: {$ref: '#/components/schemas/Timestamp'}
+    PreferenceValues:
+      type: object
+      additionalProperties: false
+      properties:
+        idle_policy: {enum: [idle_only, utilization_only, auto]}
+        max_concurrency: {type: integer, minimum: 1}
+        min_battery_percent: {type: integer, minimum: 0, maximum: 100}
+        max_temperature_c: {type: [number, 'null']}
+        allow_metered_network: {type: boolean}
+        notifications_enabled: {type: boolean}
+    Preferences:
+      type: object
+      required: [version, updated_at, values]
+      properties:
+        version: {type: integer, minimum: 0}
+        updated_at: {$ref: '#/components/schemas/Timestamp'}
+        values: {$ref: '#/components/schemas/PreferenceValues'}
+    PreferencesPatch:
+      type: object
+      additionalProperties: false
+      required: [expected_version, values]
+      properties:
+        expected_version: {type: integer, minimum: 0}
+        values: {$ref: '#/components/schemas/PreferenceValues'}
+    Event:
+      description: Versioned SSE envelope. Snapshot data is tied to scope; transitions carry redacted summaries.
+      oneOf:
+        - $ref: '#/components/schemas/LocalSnapshotEvent'
+        - $ref: '#/components/schemas/CapacitySnapshotEvent'
+        - $ref: '#/components/schemas/TransitionEvent'
+    EventEnvelope:
+      type: object
+      required: [version, id, type, scope, observed_at, data]
+      properties:
+        version: {const: '1'}
+        id: {type: string, description: Opaque stream cursor matching the SSE id field.}
+        type: {type: string}
+        scope: {enum: [local, reachable_peers]}
+        observed_at: {$ref: '#/components/schemas/Timestamp'}
+        data: {}
+    LocalSnapshotEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            type: {const: snapshot}
+            scope: {const: local}
+            data: {$ref: '#/components/schemas/NodeStatus'}
+    CapacitySnapshotEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            type: {const: snapshot}
+            scope: {const: reachable_peers}
+            data: {$ref: '#/components/schemas/CapacitySnapshot'}
+    TransitionEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            type: {enum: [capacity_changed, job_changed, mode_changed, idle_changed, transfer_changed, peer_reachability_changed]}
+            data:
+              type: object
+              required: [subject_id, state]
+              properties:
+                subject_id: {type: string}
+                state: {type: string}

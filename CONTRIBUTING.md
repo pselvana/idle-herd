@@ -1,5 +1,12 @@
 # Contributing to Ollama Herd
 
+For this Idle-Herd fork, first read the fork rules in [AGENTS.md](AGENTS.md),
+[Phase 0 status](docs/idle-herd/implementation-status.md), and
+[native development guide](docs/idle-herd/development.md). The historical upstream
+workflow below remains reference material. The fork currently retains the upstream
+Python package and commands; implement only the requested phase and work directly
+on main without worktrees. Docker/Compose work begins in Phase 10.
+
 Thanks for your interest in contributing! Whether you're fixing a bug, adding a feature, or improving docs — we appreciate it.
 
 ## Getting Started

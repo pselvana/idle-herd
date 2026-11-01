@@ -1,0 +1,11 @@
+# ADR 004: Native sensors and authorized model sharing
+
+**Status: proposed Phase 0 decision; not implemented.**
+
+Native macOS, Linux and Windows adapters report sensor source, freshness and confidence, independently of any UI. Worker-local live checks enforce policy. Unknown or stale human-activity signals make `idle_only` ineligible; headless owners may explicitly opt into utilization-only policy. Owner activity, worker eligibility, mode and service health remain distinct. Becoming active stops new idle-only admissions; existing interactive streams finish by default, with preemption an explicit policy. Model loads, transfers and jobs share local resource budgets.
+
+Model provisioning is opt-in and peer-to-peer. A destination authenticates its source, validates share permission, license/provenance, backend/format/architecture compatibility and disk headroom before downloading. Signed or authenticated manifests and their digests identify complete artifacts, not merely friendly names. A destination-local persistent digest lock prevents simultaneous imports. Transfers are bounded, chunked and resumable; verify hashes, reject absolute paths, traversal, symlinks and unexpected file types, stage privately and atomically publish only after verification and backend confirmation. If a source vanishes, resume from another authorized matching source or wait. No global coordinator, automatic cross-format conversion, disclosure of credentials or automatic deletion of pinned/manually installed models is implied.
+
+Native hosts and real sensor/backend verification precede container work; Docker and Compose integration and associated sensor limitations belong to Phase 10 only.
+
+Future acceptance: stale or unavailable activity sensors never grant idle-only work; explicit utilization-only policy is visible. On a live owner-activity transition, reject new idle-only requests despite stale gossip. Reject incompatible MLX/CUDA artifacts, insufficient space, unauthorized sharing and malicious paths before publication. Interrupt a transfer, resume against a verified source, and race two imports of the same digest; only one local install owns the lock and partial files never appear ready.

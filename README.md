@@ -1,4 +1,24 @@
-# Ollama Herd
+# Idle-Herd
+
+This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 0**.
+The running code still uses upstream's router and separate node agent. Peer ingress,
+durable worker leases, mode controls and the macOS companion are planned features.
+See [implementation status and verification](docs/idle-herd/implementation-status.md),
+[architecture](docs/idle-herd/architecture.md), [API draft](docs/idle-herd/api.md), and
+[native development/build/test instructions](docs/idle-herd/development.md).
+
+The target contract is conditional: any reachable survivor with an eligible compatible
+local backend and healthy storage/resources can execute local work without peers or
+Raft. Models and job inputs available only on an offline machine remain unavailable;
+zero live machines cannot execute. Partitions permit independent work and possible
+duplicate attempts; global exactly-once execution and complete capacity are not promised.
+Docker/Compose integration is reserved for Phase 10.
+
+The upstream README follows. Its package names, installation commands and deployment
+claims describe Ollama Herd; they do not install a completed Idle-Herd peer service.
+Upstream attribution and the [MIT license](LICENSE) are preserved.
+
+## Ollama Herd (upstream)
 
 [![PyPI version](https://img.shields.io/pypi/v/ollama-herd?color=00c853)](https://pypi.org/project/ollama-herd/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)

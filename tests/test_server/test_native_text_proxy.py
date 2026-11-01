@@ -508,7 +508,7 @@ class TestNodeMemoryBound:
         assert seen["overlapped"]
 
     @pytest.mark.asyncio
-    async def test_load_truncates_to_the_registry_not_the_model_card(self, monkeypatch):
+    async def test_load_truncates_to_the_registry_not_the_model_card(self, monkeypatch, tmp_path):
         import sys
         from unittest.mock import MagicMock
 
@@ -526,6 +526,7 @@ class TestNodeMemoryBound:
 
         monkeypatch.setitem(sys.modules, "fastembed", MagicMock(TextEmbedding=FakeTextEmbedding))
         monkeypatch.setattr(tes, "_slots", {})
+        monkeypatch.setattr(tes, "TEXT_EMBEDDING_CACHE_DIR", tmp_path)
         await tes._get_model("nomic-embed-text:latest")
         assert limits == [2048]
 

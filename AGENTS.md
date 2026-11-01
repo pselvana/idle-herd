@@ -1,5 +1,41 @@
 # AGENTS.md — Ollama Herd
 
+## Idle-Herd fork instructions (Phase 0)
+
+This checkout is the Idle-Herd fork. The upstream guidance below is retained;
+these fork rules govern the planned architecture where it differs. Runtime still
+uses upstream's router and agent: Phase 0 adds design, audit and baseline evidence,
+not a working peer daemon. Start at [implementation status](docs/idle-herd/implementation-status.md)
+and the canonical [implementation plan](IDLE-HERD_IMPLEMENTATION_PLAN.md).
+`UPSTREAM_BASE_COMMIT.txt` pins the starting checkout, not remote HEAD.
+
+- Every future peer exposes localhost OpenAI/Ollama APIs. No central router,
+  discovery seed, leader or Raft quorum may gate local inference. N=1 and any
+  single survivor of N=2 or N>=3 must work when its backend/resources are eligible.
+- Only a worker can atomically admit its own work. Persist fenced leases before
+  acknowledging; reconcile orphaned backend execution before reusing slots.
+  Gossip capacity is advisory; waiters retry live admission under a deadline.
+- Optional Raft is disabled by default and limited to strict admin metadata.
+  Never use Raft-global leases or automatically rebootstrap after quorum loss.
+- `offline` withdraws cluster participation and outbound dispatch but retains
+  localhost inference. `paused` rejects all new inference. Both drain existing
+  execution by default; cancellation is explicit.
+- Native macOS/Linux/Windows services and idle policy come first. Unknown human
+  activity cannot grant `idle_only` work. **Docker/Compose is Phase 10 only.**
+- The future SwiftUI menu bar companion and CLI share a versioned, authenticated
+  loopback control API. Daemon and sensors survive UI exit; loopback alone does
+  not authorize control. Keep peer RPC credentials and control scopes separate.
+- Model sharing requires authorization, provenance/digest verification, compatible
+  formats/backends and a destination-local install lock. Recovery is honestly
+  at least once; never promise global exactly-once execution or complete capacity.
+- Preserve upstream MIT attribution and all existing compatibility surfaces,
+  including Anthropic Messages and OpenAI Responses. Keep the current port map.
+- Work directly on main; do not use worktrees. Implement only the requested
+  phase. Future acceptance scenarios are requirements, not passing runtime tests.
+- See [architecture](docs/idle-herd/architecture.md), [API draft](docs/idle-herd/api.md),
+  [native development](docs/idle-herd/development.md) and
+  [security](docs/idle-herd/security.md). Record evidence and limitations in status.
+
 > This file is the onboarding doc for AI coding agents. If you're a human, welcome — the same applies to you.
 
 Ollama Herd is a smart inference router that turns a collection of devices running Ollama into a single local AI fleet. It routes LLM, embedding, image generation, and speech-to-text requests to the best available node using a 7-signal scoring engine, with zero config files and zero cloud dependency. The design philosophy is **node sovereignty** (each node works standalone; the router coordinates but never controls), **two-person scale** (two commands, no Docker, no Kubernetes), and **human-readable state** (JSONL logs, SQLite traces, JSON config — `grep` and `sqlite3` are your debuggers). v0.7.0 ships a native fastembed text embedding server that routes `nomic-embed-text` out of Ollama's inference queue entirely, plus a "Node Models" dashboard showing cards for all backends (Ollama, MLX, fastembed, vision embedding).
