@@ -3705,3 +3705,21 @@ remote telemetry schema tests, despite onboarding's fully offline claim. Current
 wildcard binds, unauthenticated management routes and default-on telemetry are
 audited inherited behavior, not repaired by the Phase 0 security draft. Future
 Idle-Herd admission/security work must address them within its assigned phases.
+
+## Idle-Herd Phase 1 — safe admission, remaining backend recovery/fit limits (2026-11-01)
+
+**Severity:** High if bypassed. The new `idle-herd` transport durably consumes
+worker-owned leases before backend dispatch and retains uncertain execution
+across cancellation/restart. Ollama does not provide authoritative per-request
+reconciliation here, so timeout, truncated response or daemon death quarantines
+that budget. Recovery requires the peer and **all backend runners** stopped,
+then `idle-herd reconcile --confirm-backend-stopped`. Never infer termination
+from lease expiry or empty `/api/ps`. Direct Ollama clients or a second worker
+using a different directory are outside this authority. Per-model memory fit
+uses configurable estimates rather than hardware isolation. These remain
+limitations; full details/evidence are in [Phase 1 status](idle-herd/implementation-status.md).
+
+**FIXED:** Native non-streaming Ollama responses without a `done: true` terminal
+previously synthesized success; they now return 502 like other surfaces. New
+peer shutdown also drains inherited asynchronous trace/latency writes before
+closing their databases. Tests cover both regressions without a live model.

@@ -1921,3 +1921,25 @@ it does not establish symmetric peers, durable worker leases or last-survivor
 availability. Those are specified in the Phase 0 ADRs/API and declarative future
 acceptance scenarios. Native inference, Linux/Windows, service supervision and
 UI lifecycle remain unverified. See [the evidence and handoff](idle-herd/implementation-status.md).
+
+## 2026-11-01: Idle-Herd Phase 1 fences execution at backend dispatch
+
+Reusing upstream's API translators is compatible with worker-local authority
+when every inference call passes through the fenced local Ollama transport.
+That includes embeddings, which bypass the text queue. A shared slot/memory
+budget prevents separate model queues from overbooking one worker; 100 racing
+callers are tested against one/two/three-slot budgets. Per-request binding must
+be captured when constructing a queue process function: reused queue workers
+can otherwise inherit a previous caller's ContextVar and reservation token.
+
+Native tests keep mock backend computation alive after ingress is killed. A
+new process preserves identity and generation history, rejects old tokens and
+retains quarantine even with an empty loaded-model list. A lease deadline or
+transport disconnect is not execution termination. Conservative quarantine and
+an explicit offline backend-stop attestation provide safety until an adapter
+can authoritatively reconcile individual requests. Real model/hardware and
+multi-peer survival are separate, unverified acceptance work.
+
+Final Phase 1 suite: 2037 passed, 3 optional ONNX skips, 3 inherited warnings;
+source lint/format and sdist/wheel build pass. See [exact commands, files and
+limits](idle-herd/implementation-status.md).

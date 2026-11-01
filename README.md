@@ -1,11 +1,18 @@
 # Idle-Herd
 
-This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 0**.
-The running code still uses upstream's router and separate node agent. Peer ingress,
-durable worker leases, mode controls and the macOS companion are planned features.
+This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 1**.
+`uv run idle-herd` starts single-node localhost ingress and durable worker-owned
+slot reservations in one process, without discovery, seeds or Raft. It uses a
+separately running local Ollama on port 11434; ingress stays on port 11435.
+Install this checkout with `uv sync --extra dev` first. Legacy `herd` and `herd-node`
+remain available; run one ingress on port 11435 at a time.
 See [implementation status and verification](docs/idle-herd/implementation-status.md),
 [architecture](docs/idle-herd/architecture.md), [API draft](docs/idle-herd/api.md), and
 [native development/build/test instructions](docs/idle-herd/development.md).
+See [Phase 1 APIs, configuration and crash recovery](docs/idle-herd/phase-1.md).
+Multi-peer dispatch, idle policy, mode controls, jobs, sharing and the macOS
+companion remain future phases. Native socket tests use a mock model backend;
+real Ollama/hardware inference has not been verified by this implementation.
 
 The target contract is conditional: any reachable survivor with an eligible compatible
 local backend and healthy storage/resources can execute local work without peers or

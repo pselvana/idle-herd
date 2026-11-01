@@ -1,7 +1,14 @@
-# Security boundary: Phase 0 design
+# Security boundary: Phase 1 subset and target design
 
-This is a threat model and required design, not protection provided by today's
-upstream runtime. [The audit](upstream-audit.md) records current unauthenticated
+The table below is the target threat model. Phase 1 `idle-herd` binds ingress to
+127.0.0.1, rejects non-loopback clients, unexpected Host and browser Origin/cross-site
+requests, and validates worker-issued one-use reservation capabilities. Its state
+directory is restricted to the current user (POSIX mode 0700; Windows requires
+appropriate per-user ACLs). Local inference and initial reservation issuance are
+available to local processes; **scoped caller authentication is not implemented**.
+It exposes no owner controls, peer listener, enrollment or transfer endpoints.
+See [Phase 1](phase-1.md); Phase 6's authenticated owner API remains required.
+[The audit](upstream-audit.md) records inherited unauthenticated
 routes, wildcard binds and external telemetry. Do not expose that runtime as an
 authenticated Idle-Herd peer. Its optional Anthropic API key protects only that
 surface, and CORS does not authorize network clients.

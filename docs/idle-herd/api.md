@@ -1,6 +1,12 @@
-# Idle-Herd API contract — Phase 0 draft
+# Idle-Herd API contract — roadmap and Phase 1 subset
 
-[openapi.yaml](openapi.yaml) is the versioned OpenAPI 3.1 draft for the future capacity and local node APIs. **None of its routes is implemented by Phase 0.** Names, schemas, retention, and credential provisioning remain subject to later implementation and review. The checked-out upstream application currently registers `/fleet/status`, `/fleet/queue`, `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, Ollama `/api/*`, Anthropic, and dashboard routes. This draft does not replace or change those compatibility surfaces, prescribe a new port, or assert that every peer currently serves them.
+[openapi.yaml](openapi.yaml) remains the OpenAPI 3.1 **future** cluster/control
+contract. Phase 1 implements a deliberately smaller local-only capacity/acquire/
+inspect/release API, documented with its actual fields, statuses and security in
+[phase-1.md](phase-1.md). The running peer's `/openapi.json` describes that subset;
+do not validate its responses against the future YAML or assume Phase 4 waits,
+Phase 6 control scopes, modes, or events exist. Existing inference translators are
+reused; legacy `herd` still registers its upstream dashboard/fleet routes.
 
 ## Trust and visibility
 

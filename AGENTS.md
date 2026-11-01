@@ -1,11 +1,12 @@
 # AGENTS.md — Ollama Herd
 
-## Idle-Herd fork instructions (Phase 0)
+## Idle-Herd fork instructions (Phase 1)
 
 This checkout is the Idle-Herd fork. The upstream guidance below is retained;
-these fork rules govern the planned architecture where it differs. Runtime still
-uses upstream's router and agent: Phase 0 adds design, audit and baseline evidence,
-not a working peer daemon. Start at [implementation status](docs/idle-herd/implementation-status.md)
+these fork rules govern the architecture where it differs. `idle-herd` now runs
+single-node local ingress and durable worker admission without discovery or Raft.
+Legacy `herd` / `herd-node` retain upstream behavior. Start at
+[implementation status](docs/idle-herd/implementation-status.md)
 and the canonical [implementation plan](IDLE-HERD_IMPLEMENTATION_PLAN.md).
 `UPSTREAM_BASE_COMMIT.txt` pins the starting checkout, not remote HEAD.
 
@@ -35,6 +36,9 @@ and the canonical [implementation plan](IDLE-HERD_IMPLEMENTATION_PLAN.md).
 - See [architecture](docs/idle-herd/architecture.md), [API draft](docs/idle-herd/api.md),
   [native development](docs/idle-herd/development.md) and
   [security](docs/idle-herd/security.md). Record evidence and limitations in status.
+- Read [Phase 1 runtime and recovery](docs/idle-herd/phase-1.md) before modifying
+  admission. Uncertain backend work is quarantined, never freed on TTL expiry.
+  Offline reconciliation requires the daemon and **all backend runners** stopped.
 
 > This file is the onboarding doc for AI coding agents. If you're a human, welcome — the same applies to you.
 

@@ -30,6 +30,7 @@ from fleet_manager.server.routes.routing import (
     parse_allow_fallback,
     record_routing_rejection,
     score_with_fallbacks,
+    upstream_failure_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -1149,11 +1150,6 @@ async def _route_and_stream(request: Request, inference_req: InferenceRequest):
             final_data["response"] = full_response
             final_data["message"] = {"role": "assistant", "content": full_response}
             return JSONResponse(content=final_data, headers=headers)
-        return JSONResponse(
-            content={
-                "response": full_response,
-                "message": {"role": "assistant", "content": full_response},
-                "done": True,
-            },
-            headers=headers,
-        )
+        # A missing terminal cannot certify completion (or release a worker
+        # lease). Match the other non-streaming compatibility surfaces.
+        return upstream_failure_response()

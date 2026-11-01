@@ -1,8 +1,11 @@
 # Native development, build and test paths
 
-Phase 0 retains Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
-and commands `herd` / `herd-node`. There is no `idle-herd` peer command, SwiftUI
-project, Go sidecar or native installer yet. See [verification](implementation-status.md)
+Phase 1 retains Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
+and commands `herd` / `herd-node`, and adds `idle-herd` single-node ingress.
+Run `uv run idle-herd` with separately managed local Ollama on port 11434;
+ingress binds 127.0.0.1:11435. See [runtime/configuration/recovery](phase-1.md).
+There is no SwiftUI project, Go sidecar or native installer yet.
+See [verification](implementation-status.md)
 for the actual host/results and [upstream audit](upstream-audit.md) for limitations.
 Docker/Compose is Phase 10 only; it is not a development prerequisite.
 

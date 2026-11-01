@@ -62,6 +62,7 @@ Documentation = "https://ollamaherd.com/guides"
 Issues = "https://github.com/geeks-accelerator/ollama-herd/issues"
 
 [project.scripts]
+idle-herd = "fleet_manager.cli.peer_cli:main"
 herd = "fleet_manager.cli.server_cli:main"
 herd-node = "fleet_manager.cli.node_cli:main"
 

@@ -1,8 +1,154 @@
 # Idle-Herd implementation status
 
-## Phase 0 — completed design and audit, November 1, 2026
+## Phase 1 — implemented single-node worker, November 1, 2026
 
-Only Phase 0 was implemented. Production Python source, package identity,
+Current command: `uv run idle-herd`. It runs localhost ingress and an Ollama
+adapter with a durable worker-owned slot/memory ledger in one native process,
+without discovery, seeds, Raft or the upstream router lifecycle. Legacy commands
+remain available. [Runtime, actual API subset and recovery](phase-1.md) describes
+defaults and limits; the future OpenAPI YAML and Gherkin are still specifications.
+Package identity/version and `UPSTREAM_BASE_COMMIT.txt` remain unchanged.
+
+- [x] Single-process localhost ingress, inventory and worker execution on port 11435.
+- [x] SQLite WAL/FULL leases, persistent identity/generations, opaque tokens,
+  serialized acquire/consume/release, expiry and exclusive worker ownership.
+- [x] Shared cross-model slot/memory accounting and model-specific limits with
+  live backend/model/memory checks at acquire and consume.
+- [x] OpenAI/Ollama streaming/embeddings and model listings; reused Anthropic
+  Messages and Responses translators. Standalone non-Ollama backends remain legacy.
+- [x] Minimal nonblocking local capacity/acquire/inspect/release handlers.
+- [x] Restart invalidation and quarantine of uncertain execution, plus explicit
+  offline maintenance after operator-confirmed backend stop.
+- [x] Native mock-process streaming, 100-way HTTP contention and kill/restart tests.
+- [ ] Real model/hardware acceptance, Linux/Windows execution and OS service tests.
+- [ ] Phases 2–10, including discovery, idle sensors, fair blocking waits, jobs,
+  owner controls/UI, model sharing, optional admin Raft and finally containers.
+
+### Verified safety and compatibility
+
+55 new pytest cases cover local admission, API integration, settings, failure
+injection and two native process scenarios. One/two/three-slot worker budgets
+admit exactly the configured number among 100 racing callers. Shared model/memory
+limits prevent per-model queues from exceeding the worker budget. Repeated
+acquisition is idempotent; 100 concurrent consumers of one token admit once.
+Foreign/forged tokens, model mismatch, old generations and old incarnations fail.
+
+A separate SQLite reader observes reservation commit before acknowledgment and
+`running` commit before the mock backend starts. Injected consume-commit failure
+dispatches nothing. Expiry only frees unconsumed reservations; timeout,
+cancellation, incomplete output, HTTP 5xx and abrupt death retain resource charges.
+
+Native peer/backend processes use real loopback HTTP and fabricated model output.
+100 competing acquisitions return one grant and 99 busy responses. Killing the
+peer leaves independent mock computation active; restart preserves worker ID,
+rejects its old token and denies new work despite `/api/ps` reporting no loaded
+models. After confirmed backend stop, offline reconciliation permits a higher
+generation. Another process exits via `os._exit` after commit but before replying;
+its acknowledged ledger evidence survives and old-incarnation tokens cannot run.
+These are N=1 safety tests, **not** Phase 2 multi-peer/partition evidence.
+
+The compatibility tests cover streaming and non-streaming chat through OpenAI,
+Ollama, Anthropic and Responses, all three embedding URLs and local model listings.
+An inherited non-streaming Ollama path that synthesized `done: true` after a
+missing terminal now returns 502. Peer shutdown drains inherited background
+trace/latency writes; a regression test verifies persistence without closed-DB
+errors. No optional native sidecar or real model was launched.
+
+### Commands and results
+
+Host remains Darwin arm64, Python 3.14.2. `uv` below means executable
+`/private/tmp/idle-herd-phase0-tools/bin/uv`, prefixed with
+`UV_CACHE_DIR=/private/tmp/idle-herd-phase0-uv-cache` on every invocation.
+
+| Command | Result |
+|---|---|
+| `uv run --offline pytest --tb=short -q > /private/tmp/idle-herd-phase1-final-pytest.log 2>&1` | Exit 0: **2037 passed, 3 skipped, 3 warnings in 19.90s**; 2040 collected |
+| `uv run --offline ruff check src/` | Exit 0: all checks passed |
+| `uv run --offline ruff format --check src/` | Exit 0: 92 files already formatted |
+| `.venv/bin/ruff check tests/test_peer` | Exit 0: all checks passed |
+| `.venv/bin/ruff format --check tests/test_peer` | Exit 0: 6 files already formatted |
+| `.venv/bin/pytest tests/test_peer/test_ledger.py tests/test_peer/test_app.py tests/test_peer/test_transport.py tests/test_peer/test_settings.py --tb=short -q` | Exit 0: 53 passed in 0.88s |
+| `.venv/bin/pytest tests/test_peer/test_native.py --tb=short -q` | Native rerun before final additions: exit 0, 2 passed in 2.36s; final full suite also runs the added 100-way native HTTP contention |
+| `uv run --offline idle-herd --help` | Exit 0: installed entry point and reconciliation help verified |
+| `uv build --offline --out-dir /private/tmp/idle-herd-phase1-dist` | Exit 0: sdist and wheel built, distribution `ollama-herd` 0.12.2 |
+| Wheel ZIP inspection using `.venv/bin/python` | Contains six peer modules and `idle-herd`, `herd`, `herd-node` entry points |
+| `git diff --check` | Exit 0 |
+
+The first restricted native attempt could not bind a loopback socket: 1 failed,
+1 passed. Tests were rerun with approved native access; no assertion was skipped
+to bypass the restriction. The final full suite also used approved native access
+for inherited sockets/kernel probes and remote telemetry-schema tests. Its three
+skips are inherited optional ONNX cases; the three warnings are inherited
+unawaited `_dummy_process` coroutines. The inherited fixture-loop-scope deprecation
+notice also remains. `uv --offline` does not disable network access by tests;
+phase-specific inference fixtures use only loopback/mock transports.
+
+No Go, Docker/Compose, fleet deployment, real Ollama/MLX inference, service
+installation, CVE audit, release/soak or publication was performed. Work stayed
+on `main`; no worktree, commit or remote operation was created.
+
+### Exact Phase 1 changed files
+
+Modified:
+
+- `AGENTS.md`
+- `CLAUDE.md`
+- `IDLE-HERD_IMPLEMENTATION_PLAN.md`
+- `README.md`
+- `pyproject.toml`
+- `src/fleet_manager/server/routes/ollama_compat.py`
+- `docs/idle-herd/adr-002-admission-and-capacity.md`
+- `docs/idle-herd/api.md`
+- `docs/idle-herd/architecture.md`
+- `docs/idle-herd/development.md`
+- `docs/idle-herd/implementation-status.md`
+- `docs/idle-herd/security.md`
+- `docs/issues.md`
+- `docs/observations.md`
+
+Added:
+
+- `src/fleet_manager/cli/peer_cli.py`
+- `src/fleet_manager/peer/__init__.py`
+- `src/fleet_manager/peer/app.py`
+- `src/fleet_manager/peer/backend.py`
+- `src/fleet_manager/peer/local_ledger.py`
+- `src/fleet_manager/peer/models.py`
+- `src/fleet_manager/peer/stores.py`
+- `tests/test_peer/native_runner.py`
+- `tests/test_peer/test_app.py`
+- `tests/test_peer/test_ledger.py`
+- `tests/test_peer/test_native.py`
+- `tests/test_peer/test_settings.py`
+- `tests/test_peer/test_transport.py`
+- `docs/idle-herd/phase-1.md`
+
+### Remaining Phase 1 risks
+
+Ollama has no authoritative per-request reconciliation/cancellation API in this
+adapter. Uncertain work fails closed until an operator stops **all** backend
+runners and the daemon, then explicitly attests via offline CLI. False attestation,
+direct backend clients, another worker directory using the same backend or a
+copied/restored live ledger can invalidate the budget guarantee. Use one worker
+authority per backend and healthy local storage. No power-loss/storage-fault
+durability or cross-platform filesystem certification was performed.
+
+Memory/model fit uses installed size, loaded digest and configured allowances,
+not measured GPU/VRAM/context isolation. Local processes can use inference and
+initial acquire without caller credentials; loopback/Host/Origin checks and
+one-use reservation tokens do not provide same-user app isolation. Scoped owner
+authentication remains Phase 6; no such owner endpoints exist now. Ledger/event
+history grows indefinitely, legacy pending queues are not bounded fair waits,
+and uncertain backend errors/retries can quarantine slots until maintenance.
+The local lease ledger does not persist job inputs or guarantee job recovery.
+Global exactly-once execution, complete capacity and N>1 survivor behavior are
+not claimed. The next scoped task is **Phase 2**, not containers or Raft.
+
+## Phase 0 — historical design and audit, November 1, 2026
+
+The following records the earlier Phase 0 state and evidence, before Phase 1.
+
+At that point only Phase 0 was implemented. Production Python source, package identity,
 dependencies, API behavior, port assignments and native service installation are
 unchanged. The running system remains Ollama Herd's router plus node agent.
 No future peer, lease ledger, control endpoint, idle helper, model transfer,

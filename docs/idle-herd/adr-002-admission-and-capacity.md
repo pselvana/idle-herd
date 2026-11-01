@@ -1,6 +1,11 @@
 # ADR 002: Worker-owned fenced leases and advisory capacity
 
-**Status: proposed Phase 0 decision; not implemented.**
+**Status: Phase 1 local ledger implemented; remote admission, idle policy and
+blocking wait protocol remain planned.** See [runtime](phase-1.md) and
+[verification](implementation-status.md). Native mock processes verify commit,
+contention and restart fencing. Uncertain backend execution is quarantined;
+only an offline, operator-confirmed backend stop permits reclamation. This is
+conservative reconciliation, not automatic request-specific backend cancellation.
 
 Each worker serializes live admission against its own persistent ledger and weighted resource budget, including local and remote requests. It checks model/backend health, current idle policy, memory and concurrency before issuing an opaque authenticated, bounded-TTL token. The persisted lease binds cluster ID, worker ID and incarnation, slot ID and monotonically persisted generation, request ID and reservation identity. Commit before acknowledging; persist per-worker request idempotency. Consume once under the same local authority; renew only with worker approval. A worker may atomically reserve multiple of its own slots, but cross-worker atomic allocation is deferred.
 

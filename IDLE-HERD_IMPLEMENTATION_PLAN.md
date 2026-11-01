@@ -1,10 +1,14 @@
 # Idle-Herd — Implementation Plan
 
-> **Status:** Phase 0 design/audit complete; Phases 1–10 unimplemented. Runtime retains upstream's router and node agent. See [verification and remaining risks](docs/idle-herd/implementation-status.md).
+> **Status:** Phase 0 design/audit and Phase 1 single-node runtime implemented.
+> `idle-herd` runs local ingress with durable worker admission; legacy commands
+> retain upstream behavior. Phases 2–10 remain unimplemented. See
+> [verification and remaining risks](docs/idle-herd/implementation-status.md).
 > **Prepared:** November 1, 2026  
 > **Primary development environment:** Visual Studio Code + OpenAI Codex IDE extension  
 > **Target:** Cross-platform, peer-to-peer, idle-aware independent LLM inference; no dedicated inference router; **fully functional with 1, 2, or 3+ intermittently connected nodes and no guaranteed Raft quorum**.
-> **Revision:** 4 — incorporates Phase 0 audit, validated API draft and baseline evidence; preserves native-first sequencing and quorum-free worker-local scheduling.
+> **Revision:** 5 — adds single-node worker leases, native mock crash evidence and
+> explicit conservative recovery limits; preserves native-first sequencing.
 
 This file, `IDLE-HERD_IMPLEMENTATION_PLAN.md`, is the canonical implementation plan.
 The architecture below describes the target system; completed design work does not
@@ -764,15 +768,22 @@ validation passed. Five inherited tests fetch a public telemetry schema; the
 suite is not entirely offline. No live inference, Linux/Windows native lifecycle
 or future peer guarantees were verified. Full commands, initial sandbox failures
 and limitations are in [implementation status](docs/idle-herd/implementation-status.md).
-The next implementation phase is Phase 1; all later checkboxes remain pending.
+Phase 1 implementation is recorded below; Phases 2–10 remain pending.
 
 ### Phase 1 — Production-capable **single-node mode**
 
-- [ ] Start local ingress, inference adapter and worker agent together with `idle-herd`.
-- [ ] Expose `http://localhost:11435` even with **no peers, no seeds, no consensus service**.
-- [ ] Implement a worker-local serialized, persisted slot ledger: reservation, token, consumption, release, expiry, process-restart reconciliation and crash-safe generation.
-- [ ] Keep old OpenAI/Ollama routes, streaming/embeddings, and local model inventory compatible.
-- [ ] Add per-model fit checks and a minimal local `GET capacity` and `POST acquire` path.
+- [x] Start local ingress, inference adapter and worker agent together with `idle-herd`.
+- [x] Expose `http://localhost:11435` even with **no peers, no seeds, no consensus service**.
+- [x] Implement a worker-local serialized, persisted slot ledger: reservation, token, consumption, release, expiry, process-restart reconciliation and crash-safe generation.
+- [x] Keep old OpenAI/Ollama routes, streaming/embeddings, and local model inventory compatible.
+- [x] Add per-model fit checks and a minimal local `GET capacity` and `POST acquire` path.
+
+Implementation/evidence: [Phase 1 runtime](docs/idle-herd/phase-1.md) and
+[status](docs/idle-herd/implementation-status.md). Native mock processes prove
+streaming and kill/restart fencing. Real model/hardware integration remains
+unverified. Ollama lacks authoritative per-request cancellation/status: uncertain
+execution is durably quarantined; offline operator-confirmed backend stop is
+required before reclaiming it. Phase 4's full capacity contract is still a draft.
 
 **Acceptance:** With one native service process and offline network, run and stream models; concurrent clients never exceed configured backend capacity; restart preserves identity and rejects stale lease tokens.
 
@@ -1116,7 +1127,7 @@ Idle-Herd guarantees only the following conditional property: **when at least on
 ## 13. References and verification notes
 
 **This document is the implementation specification and Phase 0 progress record.**
-Only the Phase 0 results explicitly linked above are verified; the remaining
+Only the Phase 0/1 results explicitly linked above are verified; the remaining
 architecture and milestones describe future work. Consult the pinned-checkout
 audit and implementation status for actual source locations, test evidence and
 limitations rather than treating roadmap guarantees as implemented behavior.
@@ -1133,7 +1144,12 @@ limitations rather than treating roadmap guarantees as implemented behavior.
 - OpenAI Codex VS Code extension: https://marketplace.visualstudio.com/items?itemName=OpenAI.chatgpt
 - Codex IDE workflow: https://learn.chatgpt.com/docs/codex/ide
 
-**Revision:** November 1, 2026 (v4). Records Phase 0 completion, the pinned checkout and native baseline; links audited source boundaries, ADRs, validated OpenAPI and native development paths. Aligns the mode-consumption race, timed overrides, wait cap and main-branch workflow with Phase 0 decisions. Phases 1–10 remain unimplemented; optional Raft stays outside inference and Docker/Compose stays in Phase 10. Any upstream guidance suggesting an always-on router or mandatory Raft must be interpreted using current §§0–4, 8–9, 11–12.
+**Revision:** November 1, 2026 (v5). Records Phase 0 design/baseline and Phase 1
+single-node ingress, durable worker leases and native mock crash tests. Phase 1
+hardware acceptance and the documented recovery/fit limits remain explicit.
+Phases 2–10 remain unimplemented; optional Raft stays outside inference and
+Docker/Compose stays in Phase 10. Any upstream guidance suggesting an always-on
+router or mandatory Raft must be interpreted using current §§0–4, 8–9, 11–12.
 
 **End of plan.**
 
