@@ -1,0 +1,51 @@
+# Optional two/three-peer bridge example: use --profile dual or --profile multi.
+# Enroll identities separately before configuring seeds; fixed IPs must be routable
+# from every peer that uses them. They are not automatically reachable from hosts.
+services:
+  peer:
+    environment:
+      IDLE_HERD_PEER_ENDPOINT: https://172.30.40.11:12001
+      IDLE_HERD_SEEDS: ${IDLE_HERD_PEER1_SEEDS:-[]}
+    networks:
+      herd:
+        ipv4_address: 172.30.40.11
+  peer2:
+    extends:
+      file: compose.yaml
+      service: peer
+    profiles: [dual, multi]
+    environment:
+      IDLE_HERD_PEER_ENDPOINT: https://172.30.40.12:12001
+      IDLE_HERD_SEEDS: ${IDLE_HERD_PEER2_SEEDS:-[]}
+      IDLE_HERD_CONTAINER_BACKEND_URL: ${IDLE_HERD_PEER2_BACKEND_URL:?Set an independent backend URL for peer2}
+    ports: !override
+      - "127.0.0.1:11450:8080"
+    volumes: !override
+      - peer2-data:/var/lib/idle-herd
+    networks:
+      herd:
+        ipv4_address: 172.30.40.12
+  peer3:
+    extends:
+      file: compose.yaml
+      service: peer
+    profiles: [multi]
+    environment:
+      IDLE_HERD_PEER_ENDPOINT: https://172.30.40.13:12001
+      IDLE_HERD_SEEDS: ${IDLE_HERD_PEER3_SEEDS:-[]}
+      IDLE_HERD_CONTAINER_BACKEND_URL: ${IDLE_HERD_PEER3_BACKEND_URL:-}
+    ports: !override
+      - "127.0.0.1:11451:8080"
+    volumes: !override
+      - peer3-data:/var/lib/idle-herd
+    networks:
+      herd:
+        ipv4_address: 172.30.40.13
+networks:
+  herd:
+    ipam:
+      config:
+        - subnet: 172.30.40.0/24
+volumes:
+  peer2-data:
+  peer3-data:

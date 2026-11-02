@@ -28,14 +28,23 @@ tests and remaining native platform limitations.
 optional signed peer diagnostics, Linux/Windows user-service integrations, owner
 quiet hours/contribution limits, local UI polish and seeded 1/2/3/5-peer native
 churn tests. Native manager commands are mocked; real GUI, service login/sleep/wake
-and hardware inference remain unverified. Phase 10 containers remain deferred.
+and hardware inference remain unverified.
+[Phase 10](docs/idle-herd/phase-10.md) adds optional linux/amd64 + linux/arm64 OCI
+peer and separate consensus images, Compose examples and mocked container churn
+checks. The container launcher exposes only inference/capacity/job routes through
+port 8080 mapped to host loopback 11435. Native controls remain on container
+loopback 11435 and are accessed with `docker compose exec peer idle-herd ...`.
+Backend HTTP is explicitly configured through a private loopback relay; native
+backend validation/admission is unchanged. Unknown container activity fails
+idle-only; utilization-only contribution is explicit opt-in. Native/container mixed
+routing requires enrolled identities and reachable private literal peer endpoints.
 The router/node commands and historical deployment notes below describe upstream.
 Follow the fork invariants in [AGENTS.md](AGENTS.md) and
 [implementation status](docs/idle-herd/implementation-status.md) before continuing.
 See [native development/build/test paths](docs/idle-herd/development.md),
 [architecture](docs/idle-herd/architecture.md) and [API draft](docs/idle-herd/api.md).
 The supplied root plan uses the filename `IDLE-HERD_IMPLEMENTATION_PLAN.md`.
-Docker/Compose is deferred to Phase 10. No publishing or local fleet deployment
+Docker/Compose is optional in Phase 10. No publishing or local fleet deployment
 was performed during Phases 1–2; tests used fabricated model backends.
 
 ## Build & Run

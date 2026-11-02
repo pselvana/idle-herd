@@ -1,0 +1,31 @@
+services:
+  peer:
+    build:
+      context: .
+      dockerfile: container/Dockerfile.peer
+    image: ${IDLE_HERD_PEER_IMAGE:-idle-herd-peer:local}
+    restart: unless-stopped
+    cpus: ${IDLE_HERD_CPUS:-2.0}
+    mem_limit: ${IDLE_HERD_MEMORY_LIMIT:-4g}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    ports:
+      - "127.0.0.1:${IDLE_HERD_HOST_PORT:-11435}:8080"
+    environment:
+      IDLE_HERD_DATA_DIR: /var/lib/idle-herd
+      IDLE_HERD_BACKGROUND_POLICY: ${IDLE_HERD_BACKGROUND_POLICY:-idle_only}
+      IDLE_HERD_CONTAINER_BACKEND_URL: ${IDLE_HERD_CONTAINER_BACKEND_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - peer-data:/var/lib/idle-herd
+    healthcheck:
+      test: [CMD, python, -m, fleet_manager.container_runtime, --healthcheck]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+volumes:
+  peer-data:

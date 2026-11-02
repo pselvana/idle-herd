@@ -1,4 +1,4 @@
-# Security boundary: Phases 1–8 and target design
+# Security boundary: Phases 1–10 and target design
 
 The table below is the target threat model. Phase 1 `idle-herd` binds ingress to
 127.0.0.1, rejects non-loopback clients, unexpected Host and browser Origin/cross-site
@@ -133,3 +133,20 @@ authority and cannot resurrect a ledger while old backend execution may survive.
 [Phase 9 operation](phase-9.md) documents rolling upgrade, backup and explicit
 acceptance limits. No native service or release was installed/published during this
 implementation. Upstream MIT attribution remains intact.
+
+
+## Phase 10 container boundary
+
+See [deployment and limitations](phase-10.md). Container :8080 forwards only exact
+public inference/capacity/job methods and paths, rejects browser-origin/cross-site
+requests before removing hop headers, and never exposes owner controls/dashboard,
+even with a valid owner token. Host publication is loopback; its Docker bridge
+must also contain only trusted workloads because inference/results are
+unauthenticated there. Backend relay and native owner ingress are bound to container
+loopback and unpublished. A container sharing its network namespace must be trusted.
+Peer TLS ports alone may be published on selected private interfaces after enrollment.
+Do not mount the Docker socket, session buses or input devices. Dedicated UID 10001,
+private persistent volumes, read-only rootfs, dropped capabilities and protected
+credential-file mounts retain the separate peer/owner/voter trust domains. Volume
+backups contain prompts, results and private keys. Container/VM utilization does
+not attest host human inactivity, GPU fit, AC or thermal health.

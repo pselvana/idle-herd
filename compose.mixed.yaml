@@ -1,0 +1,10 @@
+# Override the default peer for direct native/container connections. The advertised
+# address must be this host's reachable private IP, and peers must trust/enroll it.
+# Bind only to a trusted interface and firewall TCP 12001 to enrolled peers.
+services:
+  peer:
+    environment:
+      IDLE_HERD_PEER_ENDPOINT: https://${IDLE_HERD_ADVERTISE_IP:?Set a reachable private IP}:12001
+      IDLE_HERD_SEEDS: ${IDLE_HERD_SEEDS:-[]}
+    ports:
+      - "${IDLE_HERD_PEER_BIND_IP:-127.0.0.1}:12001:12001"

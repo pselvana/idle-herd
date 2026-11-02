@@ -1,0 +1,24 @@
+# Explicitly provision credentials and arguments before enabling --profile raft.
+# The peer must share the token file and set IDLE_HERD_RAFT_URL and
+# IDLE_HERD_RAFT_TOKEN_FILE. Bootstrap is a separate operator action.
+services:
+  raft:
+    profiles: [raft]
+    build:
+      context: .
+      dockerfile: container/Dockerfile.consensus
+    image: ${IDLE_HERD_RAFT_IMAGE:-idle-herd-consensus:local}
+    network_mode: service:peer
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    volumes:
+      - raft-data:/var/lib/idle-herd-raft
+      - ${IDLE_HERD_RAFT_CREDENTIALS_DIR:?Set IDLE_HERD_RAFT_CREDENTIALS_DIR}:/run/idle-herd-raft:ro
+    # Supply required -id, -raft-address, -http-address, -data-dir,
+    # -token-file, -cert, -key and -ca flags via an operator override.
+    command: []
+volumes:
+  raft-data:

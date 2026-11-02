@@ -1,6 +1,6 @@
 # AGENTS.md — Ollama Herd
 
-## Idle-Herd fork instructions (Phase 9)
+## Idle-Herd fork instructions (Phase 10)
 
 This checkout is the Idle-Herd fork. The upstream guidance below is retained;
 these fork rules govern the architecture where it differs. `idle-herd` now runs
@@ -17,7 +17,11 @@ native Go service, explicit bootstrap and voter-loss evidence. Zero voters remai
 the default; no inference or model-sharing path contacts consensus.
 See [Phase 9 native operation](docs/idle-herd/phase-9.md) for the dashboard, doctor,
 user service installers, quiet hours, peer quotas and native churn evidence.
-Physical OS lifecycle and real-backend acceptance remain explicit open gates.
+See [Phase 10 container deployment](docs/idle-herd/phase-10.md) for the optional
+multi-arch images, Compose examples and isolated inference gateway. Container owner
+controls stay loopback-only inside the container; use `docker compose exec` CLI.
+Container activity is unknown and cannot grant idle-only work; utilization mode is
+explicit opt-in. Physical OS lifecycle and real-backend acceptance remain open gates.
 Legacy `herd` / `herd-node` retain upstream behavior. Start at
 [implementation status](docs/idle-herd/implementation-status.md)
 and the canonical [implementation plan](IDLE-HERD_IMPLEMENTATION_PLAN.md).

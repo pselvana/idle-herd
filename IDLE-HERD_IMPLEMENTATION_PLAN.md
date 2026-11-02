@@ -925,16 +925,19 @@ No Phase 10 implementation or publishing is included.
 
 ### Phase 10 — Dockerization and container deployment (**LAST PHASE**)
 
-- [ ] Only after Phase 9 native readiness, build `linux/amd64` and `linux/arm64` OCI peer images plus Compose single/dual/multi-peer examples using **only the peer service** by default.
-- [ ] Provide persistent identity, job journal/cache volumes, peer listen ports, host backend configuration, trust/secrets, firewall guidance, image version pinning, restart policies and health checks.
+- [x] Build `linux/amd64` and `linux/arm64` OCI peer images plus Compose single/dual/multi-peer examples using **only the peer service** by default; Phase 9 physical native acceptance remains an open release gate.
+- [x] Provide persistent identity, job journal/cache volumes, peer listen ports, host backend configuration, trust/secrets, firewall guidance, image version pinning, restart policies and health checks.
 - [ ] Smoke-test host Ollama/MLX on Apple Silicon, Linux NVIDIA backend where available, Windows Docker Desktop host backend, and Docker Model Runner only where supported.
-- [ ] Explain that generic macOS Linux containers do not receive native Metal access or accurate keyboard-idle signals; host inference and a native authenticated sensor helper remain necessary for host-aware policy. Container-only utilization policy must be explicit opt-in.
-- [ ] Build Compose churn tests (1/2/3+ peers, seeds going down, optional Raft absent, no quorum) and test permission boundaries of local-control endpoints. Docker deployment must not require the menu bar app.
-- [ ] Do not mount the Docker socket by default. Do not assume mDNS or Linux host networking works identically across macOS, Linux and Windows Docker deployments.
+- [x] Explain that generic macOS Linux containers do not receive native Metal access or accurate keyboard-idle signals; host-aware policy requires a trusted host helper. This launcher supplies no host-sensor bridge. Container-only utilization policy is explicit opt-in.
+- [x] Compose churn tests cover 1/2/3 peers, seed loss, zero voters and local-control boundaries; a native/container pair covers bidirectional dispatch and either survivor. Existing native all-voter-loss tests verify unavailable-quorum independence. Containerized voter-loss runtime is not claimed. No menu bar is required.
+- [x] Do not mount the Docker socket by default. Do not assume mDNS or Linux host networking works identically across macOS, Linux and Windows Docker deployments.
+
+See [Phase 10 operation and recorded evidence](docs/idle-herd/phase-10.md). Real
+hardware/OS gates above remain unchecked, and the skeleton below is historical.
 
 **Acceptance:** `docker compose up -d` runs one functional containerized peer with a reachable backend, persisted identity and jobs, and clear sensor limitations. Two and 3+ native/container mixed clusters keep scheduling with arbitrary node churn. Docker does not become a precondition for native install or menu bar use.
 
-#### Deferred Docker implementation notes (reference only until Phase 10)
+#### Original Docker implementation notes (use Phase 10 guide for actual configuration)
 
 ##### Containerized packaging
 
@@ -1200,7 +1203,7 @@ limitations rather than treating roadmap guarantees as implemented behavior.
 - OpenAI Codex VS Code extension: https://marketplace.visualstudio.com/items?itemName=OpenAI.chatgpt
 - Codex IDE workflow: https://learn.chatgpt.com/docs/codex/ide
 
-**Revision:** November 1, 2026 (v13). Records Phase 0–9 implementation,
+**Revision:** November 1, 2026 (v14). Records Phase 0–10 implementation,
 including worker-local idle policy, native sensor interfaces, origin capacity waits
 and durable jobs with acknowledged peer copies. Hardware sensor
 and backend acceptance and documented recovery/fit limits remain explicit.
@@ -1208,8 +1211,9 @@ Phase 7 implements standalone GGUF sharing with declared compatibility limits;
 real GGUF/MLX load and physical GUI/service acceptance remain open. Phase 8 adds
 optional native admin-only Raft and voter-loss tests. Phase 9 adds native operation,
 diagnostics and seeded churn coverage; physical OS/GUI/hardware gates remain open.
-Phase 10 remains future work; optional Raft stays outside inference and
-Docker/Compose stays in Phase 10. Any upstream guidance suggesting an always-on
+Phase 10 adds optional multi-arch OCI packaging and Compose deployment; see
+[actual configuration, evidence and limits](docs/idle-herd/phase-10.md). Optional
+Raft stays outside inference; hardware/platform acceptance remains open. Any upstream guidance suggesting an always-on
 router or mandatory Raft must be interpreted using current §§0–4, 8–9, 11–12.
 
 **End of plan.**

@@ -1,4 +1,4 @@
-# Idle-Herd architecture: Phase 8 and target design
+# Idle-Herd architecture: Phase 10 and target design
 
 **Current runtime:** `idle-herd` combines localhost ingress, local Ollama inventory,
 and durable worker admission in one native process. Phase 2 adds a separately
@@ -63,3 +63,13 @@ worker's serialized admission/consumption checks, preserving existing fenced lea
 recovery. Per-user launchd/systemd/Task Scheduler configuration is independent of
 UI lifetime. See [policy](phase-9-policy.md), [services](phase-9-services.md) and
 [exact native/mock verification](implementation-status.md). Docker stays Phase 10.
+
+
+[Phase 10](phase-10.md) wraps the native peer with an optional Linux container
+launcher. It adds an allowlisted streaming inference gateway at container :8080
+and a private loopback backend relay, leaving owner controls on container loopback
+:11435. Container TLS peer binding can differ from its advertised host-private
+endpoint for NAT; native defaults remain unchanged. Container cgroup metrics have
+unknown host activity confidence. No container path changes worker fencing, durable
+job semantics, model authorization or consensus independence. The optional Go
+image/profile is separate and disabled by default.

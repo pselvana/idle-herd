@@ -1,6 +1,6 @@
 # Idle-Herd
 
-This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 9**.
+This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 10**.
 `uv run idle-herd` starts single-node localhost ingress and durable worker-owned
 slot reservations in one process. Opt-in authenticated peer discovery and direct
 streaming need no leader or live seed; optional admin Raft is disabled by default. It uses a
@@ -48,7 +48,13 @@ local backend and healthy storage/resources can execute local work without peers
 Raft. Models and job inputs available only on an offline machine remain unavailable;
 zero live machines cannot execute. Partitions permit independent work and possible
 duplicate attempts; global exactly-once execution and complete capacity are not promised.
-Docker/Compose integration is reserved for Phase 10.
+[Phase 10 container deployment](docs/idle-herd/phase-10.md) adds optional multi-arch
+OCI peer/consensus images and single-, dual-, multi-peer and native/container mixed
+Compose examples. The default runs only a peer, uses a host Ollama, persists its
+private state, and publishes inference on host loopback. Owner controls stay inside
+the container. Container activity is unknown for `idle_only`; contribution through
+`utilization_only` requires explicit owner opt-in. Real MLX/DMR/NVIDIA and physical
+cross-platform acceptance remain open.
 
 The upstream README follows. Its package names, installation commands and deployment
 claims describe Ollama Herd; they do not install a completed Idle-Herd peer service.

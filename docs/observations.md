@@ -2001,3 +2001,24 @@ artifacts. DOM smoke tests cover untrusted text, stream reconnect, stale status 
 disconnect. Native manager rendering and Swift builds do not establish physical
 login/sleep/wake, browser/VoiceOver or real-model acceptance; those remain explicit
 in [Phase 9 evidence](idle-herd/implementation-status.md).
+
+
+## 2026-11-01 — Phase 10 container packaging and mixed-peer evidence
+
+The optional Linux peer image wraps the native loopback peer with an allowlisted
+inference-only gateway and private host-backend relay; it does not expose owner
+controls on the published listener. Real Docker tests with fabricated backends
+exercised 1/2/3 enrolled peers, every sole survivor, durable volume restart and
+uncertain-running-job quarantine. A real native/container TLS pair exercised
+bidirectional dispatch and either sole survivor. Both OCI images build for AMD64
+and ARM64; only ARM64 container execution was exercised locally. Docker Desktop
+was initially stopped and was started for these isolated tests.
+
+Real testing found that copying a virtualenv from `/build/.venv` to `/opt` left
+console-script shebangs broken; build it at the final path instead. The backend
+may keep executing when its peer container dies, so restart must preserve
+quarantine. A separate loopback binding is essential for owner controls: publishing
+the native listener would also expose them and weaken the existing boundary.
+Container cgroup utilization is not human inactivity or physical host GPU/RAM
+fit. MLX/DMR/NVIDIA and physical cross-platform acceptance remain open; see
+[Phase 10 results and limits](idle-herd/implementation-status.md).

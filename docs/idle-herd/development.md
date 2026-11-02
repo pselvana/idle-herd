@@ -184,3 +184,25 @@ the standalone dashboard smoke harness, not daemon operation or Python tests.
 are introduced before Phase 10. Physical service/login/sleep/wake, GUI/VoiceOver,
 real inference and signed installers are separate acceptance gates, not implied
 by cross-platform configuration rendering or mock process results.
+
+
+## Phase 10 optional OCI/Compose verification
+
+[Container deployment](phase-10.md) documents builds, backend prerequisites,
+enrollment, mixed-host routing and sensor/control boundaries. The committed
+`container/dependencies.lock` makes OCI dependency resolution independent of the
+ignored root lock. Refresh it deliberately when dependencies change.
+
+```sh
+docker compose build peer
+docker compose config --quiet
+uv run pytest tests/test_container/test_runtime.py -q
+IDLE_HERD_TEST_CONTAINERS=1 uv run pytest tests/test_container/test_compose_integration.py -q
+```
+
+The opt-in tests require Docker daemon access and use fabricated backends, isolated
+Compose projects and temporary volumes. Default pytest skips them explicitly; a
+skipped container test is not runtime evidence. The non-publishing CI workflow
+builds both OCI architectures and executes the Compose tests. Multiarch archive
+builds and Linux ARM64 container runtime tests do not prove AMD64 runtime or real
+Ollama/MLX/DMR/NVIDIA and physical Windows/Linux/Desktop operation.

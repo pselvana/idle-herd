@@ -1,5 +1,90 @@
 # Idle-Herd implementation status
 
+## Phase 10 — optional OCI/Compose deployment, November 1, 2026
+
+Implemented optional multi-architecture peer and separate consensus images, locked
+container dependencies, single-/dual-/multi-peer and native/container mixed Compose
+examples, opt-in Linux NVIDIA backend configuration and non-publishing CI.
+See [configuration, enrollment, security and limitations](phase-10.md).
+Native defaults, backend URL validation, API translators, worker-local admission,
+lease fencing, jobs/model-sharing authority and the quorum-free core are retained.
+
+- [x] Built **linux/amd64 + linux/arm64 OCI archives** for Python peer and optional
+  Go consensus; no registry push. Build platform evidence is distinct from runtime.
+- [x] Default Compose runs one unprivileged peer with its own durable volume,
+  host-loopback inference publication, restart/liveness checks, explicit host-backend
+  origin, resource limits, read-only rootfs and no Docker socket. Extra peers get
+  separate state and independent backend budgets; mixed peers use explicit private
+  advertised host IPs, published TLS ports and offline device-specific enrollment.
+- [x] Container launcher streams allowlisted public inference/capacity/jobs APIs
+  through unchanged loopback admission; owner controls/dashboard/peer RPC cannot
+  cross that gateway even with valid owner tokens. CLI controls inside the container
+  remain authenticated. Browser-origin checks precede hop-header removal. Separate
+  bind/advertise arguments are opt-in; native listener defaults remain unchanged.
+- [x] Container cgroup-v2 observations never claim host idle confidence. Missing
+  limits/activity remain unknown and `idle_only` is ineligible. Utilization-only
+  contribution is explicit opt-in and does not establish physical host GPU/RAM fit.
+- [x] Real Docker Compose tests with fabricated backends: enrolled 1/2/3 peers,
+  distinct-model signed remote dispatch, every sole survivor, seed/peer loss,
+  volume-retained identity and completed jobs/idempotency after restart, killed
+  running job remains quarantined with no unsafe replay, scoped control boundaries.
+- [x] Real native Python/container pair over authenticated TLS: remote dispatch
+  both ways and local inference with either peer as the sole survivor. Native
+  backend and activity observations are fabricated; Docker Desktop networking is real.
+- [ ] Physical macOS/Windows host Ollama/MLX/DMR inference, Linux NVIDIA hardware,
+  Linux/Windows service and Docker runtime acceptance, real host-sensor bridge,
+  and AMD64 container execution. No new MLX/DMR-specific backend/import adapter.
+  The host probes on ports 11434/11440/12434 found no running backend. DMR's listed
+  Ollama API subset does not prove the required `/api/ps`/weight-size contract.
+- [ ] Optional consensus Compose template requires operator-supplied credentials,
+  flags and explicit bootstrap; multiarch image build is not containerized voter
+  runtime evidence. Native all-voter-loss tests continue to pass. No automatic
+  bootstrap/quorum recovery, registry release, signing/notarization, CVE certification
+  or physical cross-platform release acceptance is claimed.
+
+### Phase 10 commands and results
+
+Host: macOS ARM64, Python 3.14.2; Docker Desktop CLI 4.97.0, Docker CLI 29.9.2,
+Compose 5.6.1, Buildx 0.38.1. Docker Desktop was installed but initially stopped;
+started it with approved daemon access. Tests/builds used an isolated Docker
+project/subnet/volumes and fabricated backends. Work remains directly on `main`,
+without commits, worktrees, installed host inference/services or publication.
+
+| Command | Result |
+|---|---|
+| `docker buildx build --platform linux/amd64,linux/arm64 -f container/Dockerfile.peer --output type=oci,dest=/private/tmp/idle-herd-peer-multiarch.oci .` | Exit 0; both Linux platforms present in OCI index, final source archive rebuilt after runtime validation |
+| Same build for `container/Dockerfile.consensus`, destination `/private/tmp/idle-herd-consensus-multiarch.oci` | Exit 0; both Linux platforms present in OCI index |
+| Base, multi-peer, mixed-host, NVIDIA and optional-Raft `docker compose ... config --quiet` with required example environment | Exit 0; no registry publish or GPU execution |
+| `IDLE_HERD_TEST_CONTAINERS=1 .venv/bin/pytest -q -x tests/test_container/test_compose_integration.py` with Docker/native socket access | Exit 0: **4 passed in 84.18s**, log `/private/tmp/idle-herd-phase10-compose.log`; fabricated backends, deployed security restrictions, signed native/container pair |
+| `PATH=/private/tmp/go/bin:$PATH GOCACHE=/private/tmp/idle-herd-go-cache uv run --offline pytest --tb=short -q` with native access | Exit 0: **2314 passed, 7 skipped, 3 warnings in 128.29s**; log `/private/tmp/idle-herd-phase10-final-pytest.log`. Four opt-in Docker cases skipped here and passed separately above; three optional ONNX skips |
+| `uv run --offline ruff check src/ tests/test_container/`; `uv run --offline ruff format --check src/ tests/test_container/` | Exit 0; all checks passed, **122 Python source/test files** formatted |
+| In `coordination/`, `GOCACHE=/private/tmp/idle-herd-go-cache /private/tmp/go/bin/go test -race ./...` | Exit 0: `ok idle-herd/coordination (cached)` |
+| `uv build --offline --out-dir /private/tmp/idle-herd-phase10-dist` | Exit 0; wheel and sdist, including the container launcher |
+| `git diff --check` | Exit 0 |
+
+Early real-container testing caught a nonrelocatable virtualenv shebang; the
+image now builds the environment at its final `/opt/idle-herd` path. A shutdown
+regression caught cancellation closing shared storage before the TLS listener
+stopped; the launcher now awaits the optional listener independently. Docker
+startup load required explicit high utilization thresholds in **mock test fixtures**;
+production policy thresholds were not relaxed. Optional ONNX skips and inherited
+unawaited-coroutine/pytest fixture warnings remain. Normal pytest skips the opt-in
+container suite, which must be run separately to supply Docker evidence.
+
+### Phase 10 changed files
+
+- Packaging: `.dockerignore`, `container/{Dockerfile.peer,Dockerfile.consensus,dependencies.lock}`,
+  `compose.yaml`, `compose.{mixed,multi,nvidia,raft-optional}.yaml`,
+  `.github/workflows/containers.yaml`.
+- Container runtime: `src/fleet_manager/container_runtime/{__init__,__main__,runtime}.py`;
+  optional sensor/bind arguments and shutdown ordering in `src/fleet_manager/cli/peer_cli.py`.
+- Tests: `tests/test_container/{test_runtime,test_compose_integration,backend,mixed_runner}.py`.
+- Guidance: `docs/idle-herd/phase-10.md`, this status, architecture/development/security,
+  observations and root README/AGENTS/CLAUDE/implementation plan.
+
+Phase 10 is the final planned implementation phase. Remaining work is the listed
+physical/backend/platform and release acceptance gates, not an invented Phase 11.
+
 ## Phase 9 — native operation, diagnostics and churn, November 1, 2026
 
 Implemented the authenticated local dashboard, friendly doctor/model explanations,
@@ -8,7 +93,8 @@ quiet hours and contribution quotas, SwiftUI polish and seeded native churn test
 See [operation, threat boundaries, backups and rolling upgrades](phase-9.md),
 [policy](phase-9-policy.md) and [user-service installation](phase-9-services.md).
 Earlier phase sections below retain their historical evidence and limitations.
-Phase 10 remains unimplemented. Physical OS/GUI/hardware gates remain open.
+This historical Phase 9 entry predates the Phase 10 packaging recorded above.
+Physical OS/GUI/hardware gates remain open.
 
 - [x] Dashboard uses the same versioned authenticated snapshots/events as the menu
   bar, with independent polling, stale indication and stream reconnect. Connection,

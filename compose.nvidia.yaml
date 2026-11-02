@@ -1,0 +1,20 @@
+# Optional Linux NVIDIA Ollama backend. Requires NVIDIA Container Toolkit.
+services:
+  peer:
+    environment:
+      IDLE_HERD_CONTAINER_BACKEND_URL: http://ollama:11434
+  ollama:
+    image: ollama/ollama:0.12.11
+    profiles: [nvidia]
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+volumes:
+  ollama-data:

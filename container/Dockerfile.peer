@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+FROM python:3.12-slim AS build
+ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_PROJECT_ENVIRONMENT=/opt/idle-herd
+RUN pip install --no-cache-dir uv==0.9.30
+WORKDIR /build
+COPY pyproject.toml README.md LICENSE ./
+COPY container/dependencies.lock ./uv.lock
+COPY src ./src
+RUN uv sync --locked --no-dev --no-editable
+
+FROM python:3.12-slim
+ENV PATH=/opt/idle-herd/bin:$PATH \
+    IDLE_HERD_DATA_DIR=/var/lib/idle-herd \
+    PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+RUN groupadd --gid 10001 idle-herd && useradd --uid 10001 --gid 10001 --no-create-home idle-herd \
+    && mkdir -p /var/lib/idle-herd /usr/share/doc/idle-herd \
+    && chown 10001:10001 /var/lib/idle-herd
+COPY --from=build /opt/idle-herd /opt/idle-herd
+COPY LICENSE /usr/share/doc/idle-herd/LICENSE
+USER 10001:10001
+EXPOSE 8080
+ENTRYPOINT ["python", "-m", "fleet_manager.container_runtime"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["python", "-m", "fleet_manager.container_runtime", "--healthcheck"]

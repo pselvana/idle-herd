@@ -44,8 +44,12 @@ async def offline_worker():
         await ledger.close()
 
 
-async def serve(settings):
-    app = create_peer_app(settings)
+async def serve(settings, *, sensor=None, peer_bind_host=None):
+    app = (
+        create_peer_app(settings, sensor=sensor)
+        if sensor is not None
+        else create_peer_app(settings)
+    )
     # Own the shared lifespan once. Both listeners stop before durable storage closes.
     async with app.router.lifespan_context(app):
         servers = [
@@ -66,7 +70,7 @@ async def serve(settings):
                 uvicorn.Server(
                     uvicorn.Config(
                         create_peer_rpc_app(app),
-                        host=endpoint.hostname,
+                        host=peer_bind_host or endpoint.hostname,
                         port=endpoint.port,
                         ssl_certfile=str(identity.cert_path),
                         ssl_keyfile=str(identity.key_path),
@@ -101,7 +105,10 @@ async def serve(settings):
         finally:
             for server in servers:
                 server.should_exit = True
-            await asyncio.gather(*tasks)
+            # local_task was already awaited above and can be cancelled. Await the
+            # optional listener independently so cancellation cannot close the
+            # shared lifespan while that listener is still serving.
+            await asyncio.gather(*tasks[1:])
 
 
 @cli.callback(invoke_without_command=True)

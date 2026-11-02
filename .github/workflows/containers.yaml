@@ -1,0 +1,41 @@
+name: Container builds
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Validate Compose examples
+        run: |
+          docker compose config --quiet
+          IDLE_HERD_PEER2_BACKEND_URL=http://127.0.0.1:11434 IDLE_HERD_PEER3_BACKEND_URL=http://127.0.0.1:11434 docker compose -f compose.yaml -f compose.multi.yaml --profile multi config --quiet
+          IDLE_HERD_ADVERTISE_IP=192.168.1.2 docker compose -f compose.yaml -f compose.mixed.yaml config --quiet
+          IDLE_HERD_RAFT_CREDENTIALS_DIR=/tmp docker compose -f compose.yaml -f compose.raft-optional.yaml --profile raft config --quiet
+          docker compose -f compose.yaml -f compose.nvidia.yaml --profile nvidia config --quiet
+      - name: Build peer image for both architectures
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: container/Dockerfile.peer
+          platforms: linux/amd64,linux/arm64
+          push: false
+      - name: Build optional consensus image for both architectures
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: container/Dockerfile.consensus
+          platforms: linux/amd64,linux/arm64
+          push: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install -e '.[dev]'
+      - name: Exercise container runtime
+        run: IDLE_HERD_TEST_CONTAINERS=1 pytest -q tests/test_container/test_compose_integration.py

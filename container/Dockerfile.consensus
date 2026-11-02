@@ -1,0 +1,16 @@
+# syntax=docker/dockerfile:1
+FROM golang:1.24-alpine AS build
+WORKDIR /src
+COPY coordination/go.mod coordination/go.sum ./
+RUN go mod download
+COPY coordination/*.go ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/idle-herd-consensus .
+
+FROM alpine:3.22
+RUN addgroup -g 10001 idle-herd && adduser -D -H -u 10001 -G idle-herd idle-herd \
+    && mkdir -m 700 -p /var/lib/idle-herd-raft /usr/share/doc/idle-herd \
+    && chown 10001:10001 /var/lib/idle-herd-raft
+COPY --from=build /out/idle-herd-consensus /usr/local/bin/idle-herd-consensus
+COPY LICENSE /usr/share/doc/idle-herd/LICENSE
+USER 10001:10001
+ENTRYPOINT ["idle-herd-consensus"]
