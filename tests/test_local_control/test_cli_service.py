@@ -95,11 +95,11 @@ def test_launchd_install_and_explicit_registration(monkeypatch, tmp_path):
 
 
 def test_service_unsupported(monkeypatch):
-    monkeypatch.setattr(service.sys, "platform", "linux")
+    monkeypatch.setattr(service.sys, "platform", "freebsd")
     for action in ("install", "enable", "disable", "start", "status"):
         result = CliRunner().invoke(peer_cli.cli, ["service", action])
         assert result.exit_code != 0
-        assert "only on macOS" in result.output
+        assert "only on macOS, Linux and Windows" in result.output
 
 
 def test_install_preserves_effective_settings(tmp_path, monkeypatch):
@@ -133,3 +133,88 @@ def test_install_preserves_effective_settings(tmp_path, monkeypatch):
     assert json.loads(env["IDLE_HERD_SEEDS"]) == settings.seeds
     assert json.loads(env["IDLE_HERD_MODEL_SLOTS"]) == settings.model_slots
     assert destination.stat().st_mode & 0o777 == 0o600
+
+
+def test_linux_user_service_render_and_commands(monkeypatch, tmp_path):
+    monkeypatch.setattr(service.sys, "platform", "linux")
+    path = tmp_path / "user" / "idle-herd.service"
+    monkeypatch.setattr(service, "systemd_path", lambda: path)
+    executable = tmp_path / "idle herd%daemon"
+    executable.write_text("")
+    calls = []
+    monkeypatch.setattr(service, "_systemctl", lambda *args: calls.append(args))
+    service.install(str(tmp_path / "data dir"), str(executable))
+    unit = path.read_text()
+    assert 'ExecStart="' + str(executable).replace("%", "%%") + '"' in unit
+    assert "IDLE_HERD_DATA_DIR=" + str(tmp_path / "data dir") in unit
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert calls == []
+    service.enable()
+    service.start()
+    service.disable()
+    assert calls == [
+        ("daemon-reload",),
+        ("enable", "--now", service.UNIT),
+        ("start", service.UNIT),
+        ("disable", "--now", service.UNIT),
+    ]
+
+
+def test_windows_user_task_render_and_commands(monkeypatch, tmp_path):
+    import xml.etree.ElementTree as ET
+
+    monkeypatch.setattr(service.sys, "platform", "win32")
+    path = tmp_path / "user service" / "task.xml"
+    monkeypatch.setattr(service, "windows_task_path", lambda: path)
+    calls = []
+
+    def manager(*args, **kw):
+        from types import SimpleNamespace
+
+        calls.append((args, kw))
+        return SimpleNamespace(stdout='"Status"\n"Running"\n')
+
+    monkeypatch.setattr(service, "_schtasks", manager)
+    service.install(str(tmp_path / "data"))
+    root = ET.fromstring(path.read_bytes())
+    ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+    assert root.findtext(".//t:LogonType", namespaces=ns) == "InteractiveToken"
+    assert root.findtext(".//t:RunLevel", namespaces=ns) == "LeastPrivilege"
+    assert str(path.with_suffix(".py")) in root.findtext(".//t:Arguments", namespaces=ns)
+    assert "IDLE_HERD_DATA_DIR" in path.with_suffix(".py").read_text()
+    assert calls == []
+    service.enable()
+    service.start()
+    service.disable()
+    assert [entry[0][0] for entry in calls] == [
+        "/Create",
+        "/Run",
+        "/Run",
+        "/Query",
+        "/Change",
+        "/End",
+    ]
+    assert calls[-1][1] == {}
+
+
+def test_systemd_escapes_and_rejects_newlines():
+    assert service._systemd_quote('a%"\\b') == '"a%%\\"\\\\b"'
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        service._systemd_quote("bad\nvalue")
+
+
+def test_windows_disable_stopped_task_without_end(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(service.sys, "platform", "win32")
+    calls = []
+
+    def manager(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout='"Status"\n"Ready"\n')
+
+    monkeypatch.setattr(service, "_schtasks", manager)
+    service.disable()
+    assert [call[0] for call in calls] == ["/Query", "/Change"]

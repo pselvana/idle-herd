@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime
 
 from fleet_manager.peer.models import (
     AdmissionError,
@@ -162,10 +163,31 @@ class IdlePolicy:
                     self._changed.notify_all()
             return decisions
 
+    def _peer_decision(self, decision: EligibilityDecision) -> EligibilityDecision:
+        reason = None
+        if decision.activity == "active":
+            reason = "owner_active"
+        elif self.settings.quiet_hours_enabled:
+            local = datetime.now().astimezone()
+            minute = local.hour * 60 + local.minute
+            start = self.settings.quiet_hours_start_minute
+            end = self.settings.quiet_hours_end_minute
+            in_quiet_hours = (
+                start <= minute < end if start < end else minute >= start or minute < end
+            )
+            if start == end or in_quiet_hours:
+                reason = "quiet_hours"
+        if reason:
+            return decision.model_copy(
+                update={"eligible": False, "reason": reason, "state": "draining"}
+            )
+        return decision
+
     async def decision(
-        self, workload: Workload = "interactive", idle_only: bool = False
+        self, workload: Workload = "interactive", idle_only: bool = False, *, peer: bool = False
     ) -> EligibilityDecision:
-        return (await self._observe())[workload, idle_only]
+        decision = (await self._observe())[workload, idle_only]
+        return self._peer_decision(decision) if peer else decision
 
     async def require(
         self,
@@ -174,10 +196,13 @@ class IdlePolicy:
         *,
         additional_workload: Workload | None = None,
         additional_idle_only: bool = False,
+        peer: bool = False,
     ) -> EligibilityDecision:
         # Evaluate stored and caller-tightened constraints from one live sample;
         # a second sample must not invalidate the first check unnoticed.
         decisions = await self._observe()
+        if peer:
+            decisions = {key: self._peer_decision(decision) for key, decision in decisions.items()}
         required = [(workload, idle_only)]
         if additional_workload is not None:
             required.append((additional_workload, additional_idle_only))

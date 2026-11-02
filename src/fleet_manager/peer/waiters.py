@@ -47,6 +47,10 @@ class OriginWaiters:
         self._inflight = set()
         self._db = None
 
+    def pending_count(self) -> int:
+        """Local observations only; multiple callers may share one idempotent wait."""
+        return sum(item.users for item in self._pending.values() if not item.future.done())
+
     async def open(self):
         path = Path(self.local.state.ledger.settings.data_dir).expanduser() / "origin.sqlite"
         self._db = await aiosqlite.connect(path)

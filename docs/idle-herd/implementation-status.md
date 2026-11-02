@@ -1,5 +1,102 @@
 # Idle-Herd implementation status
 
+## Phase 9 — native operation, diagnostics and churn, November 1, 2026
+
+Implemented the authenticated local dashboard, friendly doctor/model explanations,
+optional signed peer observations, native per-user service integrations, owner
+quiet hours and contribution quotas, SwiftUI polish and seeded native churn tests.
+See [operation, threat boundaries, backups and rolling upgrades](phase-9.md),
+[policy](phase-9-policy.md) and [user-service installation](phase-9-services.md).
+Earlier phase sections below retain their historical evidence and limitations.
+Phase 10 remains unimplemented. Physical OS/GUI/hardware gates remain open.
+
+- [x] Dashboard uses the same versioned authenticated snapshots/events as the menu
+  bar, with independent polling, stale indication and stream reconnect. Connection,
+  observation and inspection guards prevent delayed responses overwriting newer
+  state. Text nodes and a hash-restricted CSP protect untrusted UI content.
+- [x] Local and remote platform/backend/model inventory, sensor provenance, live
+  local slot/waiter counts, redacted worker correlations, latest-50 origin job
+  history/durability/duplicate consent, transfer progress and optional admin state.
+  Unreachable/older peers have unknown current diagnostics. Copy acknowledgments
+  are historical evidence, not proof of currently reachable copies.
+- [x] Optional signed `/peer/v1/status`, semaphore-bounded independent polling,
+  worker/incarnation/signature/age checks and bounded aggregate observations.
+  Unknown/404 status never changes discovery/admission. No inference or local status
+  request synchronously contacts this cache's remote RPC or admin consensus.
+- [x] `idle-herd doctor [--model NAME] [--json]`, `peers`, and existing CLI/API
+  controls explain backend fit, owner policy, sensor/session provenance, visibility,
+  quarantine and listener state. Advice does not claim a real network/permission audit.
+- [x] Persisted quiet hours, AC/battery controls and worker-atomic per-origin peer
+  concurrency quotas, checked at grant and consumption. Owner activity overrides
+  optimistic peer policy. Running/quarantined work retains its charge. A 20-caller
+  quota race admits exactly two at quota two, while another peer can still acquire.
+- [x] Opt-in generic open-tab health notifications and public menu-count privacy;
+  no prompt/result/credential in status/history/events. Lease/incarnation/generation
+  and hashed request correlations support investigation without raw request IDs.
+- [x] User-service configuration/install/lifecycle helpers for launchd, systemd user
+  and account-scoped Task Scheduler; authenticated API startup toggles never stop
+  the current daemon. Unknown manager state is null. No backend is managed by UI.
+- [x] Native mock-process seeded 1/2/3/5-peer partitions, per-peer abrupt restarts,
+  local inference, live bounded waits, durable result recovery and remote dispatch
+  after healing; backend peak remains within one slot. Existing 2/3-to-one survivor,
+  worker crash/quarantine and all-voter-loss tests pass in the full suite.
+- [ ] Physical macOS/Linux/Windows service registration/login/logout/restart,
+  sleep/wake, network roaming, real Ollama/MLX/hardware execution, browser/GUI and
+  VoiceOver acceptance. Optional Windows/Linux tray apps, signed MSI/PKG/notarized
+  distribution and a packaged optional Raft-sidecar installer are not provided.
+  These are explicit release/native acceptance gates, not passing mock tests.
+
+### Phase 9 commands and results
+
+Host: native macOS arm64, Python 3.14.2, Node 24.5.0. `uv` is
+`/private/tmp/idle-herd-phase0-tools/bin/uv`, with
+`UV_CACHE_DIR=/private/tmp/idle-herd-phase0-uv-cache`. Go 1.25.5 is in
+`/private/tmp/go/bin`; `GOCACHE=/private/tmp/idle-herd-go-cache`. Native loopback/OS
+access was approved for the full suite and mock benchmark. Work stays directly on
+`main`; no service/backend was installed, no fleet was deployed, and no release,
+commit, worktree, Docker or Compose integration was created.
+
+| Command | Result |
+|---|---|
+| `PATH=/private/tmp/go/bin:$PATH GOCACHE=/private/tmp/idle-herd-go-cache uv run --offline pytest --tb=short -q > /private/tmp/idle-herd-phase9-final-pytest.log 2>&1` with native OS/socket access | Exit 0: **2302 passed, 3 skipped, 3 warnings in 129.98s** |
+| Initial full-suite run before final peer diagnostics additions | Exit 0: **2297 passed, 3 skipped, 3 warnings in 122.22s**; superseded by final run above |
+| `uv run --offline ruff check src/`; `uv run --offline ruff format --check src/` | Exit 0, all checks passed; **115 source files** formatted |
+| Ruff check/format of changed/new tests plus `scripts/idle_herd_benchmark.py` | Exit 0; combined source/test check covered **122 files** |
+| In `coordination/`, `GOCACHE=/private/tmp/idle-herd-go-cache /private/tmp/go/bin/go test -race ./...` with native access | Exit 0: `ok idle-herd/coordination 3.680s` |
+| `CLANG_MODULE_CACHE_PATH=/private/tmp/idle-herd-clang-cache SWIFTPM_MODULECACHE_OVERRIDE=/private/tmp/idle-herd-swift-module-cache swift build --disable-sandbox --package-path apps/macos/IdleHerdMenuBar` | Exit 0; final UI built in 2.30s |
+| Same Swift/cache environment, `swift run --disable-sandbox --package-path apps/macos/IdleHerdMenuBar ClientSmoke` | Exit 0; existing authenticated actions, credential, transfer and snapshot-recovery smoke checks pass |
+| `node tests/test_local_control/dashboard_smoke.mjs` | Exit 0; mock DOM verifies text-only untrusted content, event EOF reconnect, model query encoding/capacity, delayed old observations, old poll failure after new event, and disconnect fencing |
+| `uv build --offline --out-dir /private/tmp/idle-herd-phase9-dist` | Exit 0; wheel + sdist built; wheel contents checked byte-for-byte against current dashboard assets and both diagnostics modules |
+| Runtime OpenAPI assertions | Anthropic Messages, OpenAI Responses/chat, Ollama chat, local peers and diagnostics paths present |
+| `uv run --offline python scripts/idle_herd_benchmark.py --clients 10 --hold-ms 20` with native access | Exit 0; ten mock-only samples, one slot, p50 **138.111 ms**, p95/max **256.223 ms** |
+| `git diff --check`; branch check | Exit 0; work directly on `main` |
+
+Three optional ONNX skips, three inherited unawaited-coroutine warnings and the
+pytest-asyncio fixture-loop-scope deprecation remain. Native test attempts inside
+the restricted sandbox failed socket binds; approved full native runs above retain
+all assertions and pass. A temporary duplicate test basename caused a collection
+error during development; the peer file was renamed before the final full run.
+Swift emitted restricted user-cache warnings but built successfully. XCTest/GUI
+acceptance was not rerun or claimed; the installed Command Line Tools previously
+lacked XCTest. The Browser skill reported no available browser, so the DOM smoke is
+not browser rendering/accessibility evidence. Inherited telemetry contract tests may
+contact their existing schema endpoint; uv offline controls resolution, not test
+network access. No dependency/CVE, release-checklist, Homebrew-install or soak claim.
+
+### Phase 9 changed files
+
+- Runtime/CLI: `src/fleet_manager/cli/peer_cli.py`;
+  `local_control/{dashboard,diagnostics,models,router,service}.py` and
+  `local_control/assets/dashboard.{html,css,js}`;
+  `peer/{app,diagnostics,local_ledger,models,network,policy,waiters}.py`.
+- Native companion: `apps/macos/IdleHerdMenuBar/Sources/IdleHerdMenuBar/App.swift`.
+- Tests/evidence: `tests/test_local_control/{test_api,test_cli_service,test_diagnostics}.py`,
+  `tests/test_local_control/dashboard_smoke.mjs`,
+  `tests/test_peer/{test_policy,test_churn_native,test_peer_diagnostics}.py`,
+  `scripts/idle_herd_benchmark.py`.
+- Documentation: `docs/idle-herd/phase-9{,-policy,-services}.md`, this status,
+  API/architecture/development/security, observations and root README/AGENTS/CLAUDE/plan.
+
 ## Phase 8 — optional native admin consensus, November 1, 2026
 
 Implemented a separate native Go HashiCorp Raft service with persistent Bolt

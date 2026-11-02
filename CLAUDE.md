@@ -24,6 +24,11 @@ only stores cluster labels/operator notes; never worker leases, job runtime or
 owner policy. No inference path contacts it. Bootstrap is explicit and never
 repeated automatically after quorum loss. See the status document for voter-death
 tests and remaining native platform limitations.
+[Phase 9](docs/idle-herd/phase-9.md) adds the authenticated dashboard/doctor,
+optional signed peer diagnostics, Linux/Windows user-service integrations, owner
+quiet hours/contribution limits, local UI polish and seeded 1/2/3/5-peer native
+churn tests. Native manager commands are mocked; real GUI, service login/sleep/wake
+and hardware inference remain unverified. Phase 10 containers remain deferred.
 The router/node commands and historical deployment notes below describe upstream.
 Follow the fork invariants in [AGENTS.md](AGENTS.md) and
 [implementation status](docs/idle-herd/implementation-status.md) before continuing.

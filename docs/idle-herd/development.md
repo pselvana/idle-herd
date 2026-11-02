@@ -1,6 +1,6 @@
 # Native development, build and test paths
 
-Phases 1–8 retain Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
+Phases 1–9 retain Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
 and commands `herd` / `herd-node`, and adds `idle-herd` single-node ingress.
 Run `uv run idle-herd` with separately managed local Ollama on port 11434;
 ingress binds 127.0.0.1:11435. See [runtime/configuration/recovery](phase-1.md).
@@ -125,13 +125,13 @@ Native lifecycle work is staged as follows:
 
 | Host | Existing material / development path | Future evidence required |
 |---|---|---|
-| macOS | Python/uv; upstream [launchd examples](../examples/launchd/README.md) describe two legacy processes | Independent daemon user service, restart/sleep/wake, sensor permissions; Phase 6 SwiftUI MenuBarExtra/XCTest with a mocked secure API; UI exit leaves jobs alive |
-| Linux | Python/uv; no Idle-Herd systemd unit supplied | User/system service scope, session vs headless idle, restart/network changes, CPU and supported GPU backends |
-| Windows | Python/uv in PowerShell; no Idle-Herd service/task installer supplied | Scoped service or scheduled task, session idle provenance, graceful shutdown, restart/sleep/wake and supported CPU/GPU backends |
+| macOS | Python/uv and Phase 9 per-user launchd installer; upstream examples describe legacy services | Independent daemon user service, restart/sleep/wake, sensor permissions; Phase 6 SwiftUI MenuBarExtra/XCTest with a mocked secure API; UI exit leaves jobs alive |
+| Linux | Python/uv and Phase 9 systemd user-unit installer | User/system service scope, session vs headless idle, restart/network changes, CPU and supported GPU backends |
+| Windows | Python/uv in PowerShell and Phase 9 account-scoped Task Scheduler installer | Scoped service or scheduled task, session idle provenance, graceful shutdown, restart/sleep/wake and supported CPU/GPU backends |
 
 Do not copy reference-fleet process-kill recipes from historical CLAUDE.md onto an
-unrelated machine. Native service installation and companion builds arrive in
-later phases; the UI never supervises daemon execution. Existing ports remain
+unrelated machine. See [Phase 9 service installation](phase-9-services.md) for current native helpers;
+the UI never supervises daemon execution. Existing ports remain
 unchanged. Peer listeners use explicitly allocated unused private HTTPS endpoints;
 there is no default new peer port.
 
@@ -160,3 +160,27 @@ backend/peer processes. Alternatively supply `IDLE_HERD_RAFT_BINARY` as an absol
 path to a built executable. Without Go or that variable, native voter acceptance
 explicitly skips. No real Ollama, weights or container runtime is needed. See
 [Phase 8 operation and verification limits](phase-8.md).
+
+## Phase 9 native operation and verification
+
+[Phase 9](phase-9.md) adds dashboard/doctor, signed advisory peer observations,
+[owner quiet hours/contribution limits](phase-9-policy.md), SwiftUI polish and
+[macOS/Linux/Windows user-service installers](phase-9-services.md). Service configurations now exist for all three platforms; actual OS
+registration/lifecycle remains unverified.
+
+```console
+uv run pytest tests/test_local_control/ tests/test_peer/test_policy.py tests/test_peer/test_peer_diagnostics.py -q
+uv run pytest tests/test_peer/test_churn_native.py -q
+node tests/test_local_control/dashboard_smoke.mjs
+uv run python scripts/idle_herd_benchmark.py --clients 10 --hold-ms 20
+```
+
+Churn and mock benchmarks start native loopback processes in temporary directories;
+they need socket permission and never manage the owner's backend or service. The
+churn matrix covers 1/2/3/5 peers, application-level partitions and restarts. Keep
+running existing crash/fence and all-voter-loss tests too. Node is needed only for
+the standalone dashboard smoke harness, not daemon operation or Python tests.
+`uv build` includes the HTML/CSS/JS assets in the wheel. No Docker/Compose tests
+are introduced before Phase 10. Physical service/login/sleep/wake, GUI/VoiceOver,
+real inference and signed installers are separate acceptance gates, not implied
+by cross-platform configuration rendering or mock process results.

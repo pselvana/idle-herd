@@ -340,3 +340,116 @@ async def test_n1_headless_local_api_and_background_policy_without_helpers(tmp_p
         )
         assert response.status_code == 422
         assert len(executions) == 1
+
+
+async def test_peer_quota_is_per_origin_and_rechecked_after_owner_change(tmp_path):
+    from fleet_manager.local_control.models import PreferencesPatch, PreferencesUpdate
+
+    async with ledger_for(tmp_path, MutableSensor(), slots=4, peer_max_concurrent=1) as ledger:
+        first = await ledger.acquire(spec("peer/alice/one"), peer=True)
+        with pytest.raises(AdmissionError, match="peer_quota"):
+            await ledger.acquire(spec("peer/alice/two"), peer=True)
+        other = await ledger.acquire(spec("peer/bob/one"), peer=True)
+        local = await ledger.acquire(spec("local"))
+        await ledger.update_preferences(
+            PreferencesUpdate(expected_version=1, values=PreferencesPatch(peer_max_concurrent=0))
+        )
+        with pytest.raises(AdmissionError, match="peer_quota"):
+            await ledger.consume(first.token, first.model)
+        await ledger.consume(local.token, local.model)
+        await ledger.release(other.token)
+        await ledger.update_preferences(
+            PreferencesUpdate(expected_version=2, values=PreferencesPatch(peer_max_concurrent=1))
+        )
+        await ledger.consume(first.token, first.model)
+        await ledger.finish(first.token, stopped=False)
+        with pytest.raises(AdmissionError, match="peer_quota"):
+            await ledger.acquire(spec("peer/alice/three"), peer=True)
+
+
+async def test_quiet_hours_and_owner_activity_recheck_peer_only(tmp_path):
+    from fleet_manager.local_control.models import PreferencesPatch, PreferencesUpdate
+
+    sensor = MutableSensor()
+    async with ledger_for(tmp_path, sensor, slots=2, interactive_policy="always") as ledger:
+        lease = await ledger.acquire(
+            AcquireRequest(model="tiny", request_id="peer/a/one"), peer=True
+        )
+        sensor.fields["idle_seconds"] = 0
+        with pytest.raises(AdmissionError, match="owner_active"):
+            await ledger.consume(lease.token, lease.model)
+        sensor.fields["idle_seconds"] = 1000
+        await ledger.update_preferences(
+            PreferencesUpdate(
+                expected_version=1,
+                values=PreferencesPatch(
+                    quiet_hours_enabled=True, quiet_hours_start_minute=0, quiet_hours_end_minute=0
+                ),
+            )
+        )
+        with pytest.raises(AdmissionError, match="quiet_hours"):
+            await ledger.consume(lease.token, lease.model)
+        local = await ledger.acquire(AcquireRequest(model="tiny", request_id="local"))
+        await ledger.consume(local.token, local.model)
+
+
+@pytest.mark.parametrize(
+    ("minute", "blocked"), [(419, True), (420, False), (1319, False), (1320, True)]
+)
+async def test_quiet_hours_cross_midnight(monkeypatch, minute, blocked):
+    import fleet_manager.peer.policy as policy_module
+
+    class FixedDateTime:
+        @staticmethod
+        def now():
+            class Local:
+                def __init__(self):
+                    self.hour = minute // 60
+                    self.minute = minute % 60
+
+                def astimezone(self):
+                    return self
+
+            return Local()
+
+    monkeypatch.setattr(policy_module, "datetime", FixedDateTime)
+    rule = policy(quiet_hours_enabled=True)
+    if blocked:
+        with pytest.raises(AdmissionError, match="quiet_hours"):
+            await rule.require("interactive", peer=True)
+    else:
+        await rule.require("interactive", peer=True)
+
+
+async def test_peer_capacity_reports_owner_activity_quiet_hours_and_zero_quota(tmp_path):
+    sensor = MutableSensor(idle_seconds=0)
+    async with ledger_for(tmp_path, sensor, interactive_policy="always") as ledger:
+        local = await ledger.capacity("tiny:latest")
+        peer = await ledger.capacity("tiny:latest", peer=True)
+        assert local.eligible and peer.reason == "owner_active"
+        assert peer.observed_available_slots == 0 and not peer.eligibility.eligible
+        sensor.fields["idle_seconds"] = 1000
+        ledger.settings.quiet_hours_enabled = True
+        ledger.settings.quiet_hours_start_minute = ledger.settings.quiet_hours_end_minute = 0
+        peer = await ledger.capacity("tiny:latest", peer=True)
+        assert peer.reason == "quiet_hours" and peer.observed_available_slots == 0
+        ledger.settings.quiet_hours_enabled = False
+        ledger.settings.peer_max_concurrent = 0
+        peer = await ledger.capacity("tiny:latest", peer=True)
+        assert peer.reason == "peer_quota" and peer.observed_available_slots == 0
+
+
+async def test_peer_quota_race_is_worker_atomic(tmp_path):
+    async with ledger_for(tmp_path, MutableSensor(), slots=8, peer_max_concurrent=2) as ledger:
+
+        async def try_acquire(index):
+            try:
+                return await ledger.acquire(spec(f"peer/alice/{index}"), peer=True)
+            except AdmissionError as exc:
+                return exc.reason
+
+        results = await asyncio.gather(*(try_acquire(i) for i in range(20)))
+        assert sum(result == "peer_quota" for result in results) == 18
+        assert sum(not isinstance(result, str) for result in results) == 2
+        other = await ledger.acquire(spec("peer/bob/one"), peer=True)
+        assert other.state == "reserved"

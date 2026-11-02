@@ -164,6 +164,7 @@ class PeerRPC:
                 "/peer/v1/release",
                 "/peer/v1/inspect",
                 "/peer/v1/capacity",
+                "/peer/v1/status",
                 "/peer/v1/jobs/store",
                 "/peer/v1/jobs/fetch",
                 "/peer/v1/models/inventory",
@@ -233,6 +234,11 @@ class PeerRPC:
             result = await self.local.state.directory.exchange(
                 principal, Exchange.model_validate_json(body)
             )
+        elif path.endswith("status"):
+            from fleet_manager.peer.diagnostics import StatusQuery, local_observation
+
+            StatusQuery.model_validate_json(body)
+            result = await local_observation(self.local)
         elif path.endswith("capacity"):
             from fleet_manager.peer.capacity import CapacityQuery
 

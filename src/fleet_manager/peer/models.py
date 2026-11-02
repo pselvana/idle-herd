@@ -35,6 +35,12 @@ class PeerSettings(BaseSettings):
     gpu_busy_percent: float = Field(default=25, gt=0, le=100)
     battery_floor_percent: float = Field(default=30, ge=0, le=100)
     require_ac: bool = False
+    quiet_hours_enabled: bool = False
+    quiet_hours_start_minute: int = Field(default=1320, ge=0, le=1439)
+    quiet_hours_end_minute: int = Field(default=420, ge=0, le=1439)
+    peer_max_concurrent: int = Field(default=128, ge=0, le=128)
+    notifications_enabled: bool = False
+    hide_job_counts: bool = False
     sensor_max_age: float = Field(default=5, ge=0.1, le=60)
     sensor_interval: float = Field(default=2, ge=0.1, le=30)
     sensor_helper: str | None = None

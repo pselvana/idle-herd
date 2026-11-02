@@ -109,3 +109,27 @@ resource exhaustion, symlink/path traversal and UI output injection. The declara
 [failure scenarios](../../tests/contracts/idle_herd.feature) are future test
 requirements, not completed security verification. No live fleet was deployed or
 credentials generated during Phase 0.
+
+## Phase 9 operation and diagnostics
+
+The authenticated read-only dashboard keeps its token only in connected-tab memory,
+uses hash-restricted inline assets and text-node insertion, and aborts/discards old
+connection results. Browser owner writes remain rejected. Generic health alerts
+require a persisted daemon opt-in plus tab/browser permission; no prompts, model
+names or job IDs appear in notification text. `hide_job_counts` applies to the
+public macOS menu-bar label, not authorized private job history.
+
+Signed optional `/peer/v1/status` reveals only bounded aggregate platform/backend,
+model-name, sensor/activity, policy and slot/job/waiter observations to enrolled
+peers. No owner controls or job payloads are exposed. Cached responses bind to
+worker/incarnation and expire by both receipt and source observation age. Failed
+probes/old implementations produce unknown values; the independent poller never
+authorizes inference. Status counts are advisory under churn and partitions.
+
+Generated user-service settings/Windows launchers contain local configuration and
+must be private. Windows ACLs and localized manager output need native validation;
+unknown state is not guessed. Offline backup/restore must preserve a single worker
+authority and cannot resurrect a ledger while old backend execution may survive.
+[Phase 9 operation](phase-9.md) documents rolling upgrade, backup and explicit
+acceptance limits. No native service or release was installed/published during this
+implementation. Upstream MIT attribution remains intact.

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import secrets
 import time
 import uuid
@@ -252,7 +254,12 @@ class LocalLedger:
             await self._db.execute("SELECT body FROM control_state WHERE key='preferences'")
         ).fetchone()
         if row:
-            return PreferencesState.model_validate_json(row[0])
+            stored = json.loads(row[0])
+            defaults = {
+                name: getattr(self.settings, name) for name in PreferencesValues.model_fields
+            }
+            stored["values"] = defaults | stored["values"]
+            return PreferencesState.model_validate(stored)
         values = PreferencesValues(
             **{name: getattr(self.settings, name) for name in PreferencesValues.model_fields}
         )
@@ -307,6 +314,10 @@ class LocalLedger:
             return [
                 WorkerLease(
                     job_id=item.reservation_id,
+                    lease_id=item.reservation_id,
+                    request_id_hash=hashlib.sha256(item.request_id.encode()).hexdigest()[:16],
+                    worker_incarnation=item.worker_incarnation,
+                    slot_generation=item.slot_generation,
                     state=item.state,
                     model=item.model,
                     workload=item.workload,
@@ -322,6 +333,22 @@ class LocalLedger:
             await self._db.execute(f"SELECT * FROM leases WHERE state IN {OCCUPIED}")
         ).fetchall()
         return [Lease(**dict(row)) for row in rows]
+
+    def _check_peer_quota(self, request_id: str, occupied: list[Lease], *, existing: bool):
+        # Peer request IDs are namespaced by their authenticated principal.
+        parts = request_id.split("/", 2)
+        principal = parts[1] if len(parts) == 3 and parts[0] == "peer" and parts[1] else None
+
+        def same_principal(item: Lease) -> bool:
+            other = item.request_id.split("/", 2)
+            other_principal = other[1] if len(other) == 3 and other[0] == "peer" else None
+            return item.peer_origin and principal == other_principal
+
+        used = sum(same_principal(item) for item in occupied)
+        if used > self.settings.peer_max_concurrent or (
+            not existing and used >= self.settings.peer_max_concurrent
+        ):
+            raise AdmissionError("peer_quota", 429)
 
     async def _event(self, lease: Lease, state: str):
         self._lease_changed = True
@@ -354,13 +381,19 @@ class LocalLedger:
                 ):
                     raise AdmissionError("idempotency_conflict")
                 if lease.worker_incarnation == self.incarnation and lease.state == "reserved":
-                    await self.policy.require(lease.workload, lease.idle_only)
+                    if peer:
+                        self._check_peer_quota(
+                            lease.request_id, await self._occupied(), existing=True
+                        )
+                    await self.policy.require(lease.workload, lease.idle_only, peer=peer)
                     if lease.expires_at <= time.time():
                         raise AdmissionError("reservation_not_active")
                     return lease
                 raise AdmissionError("request_already_used")
             fit = await self.fit_check(spec.model)
             occupied = await self._occupied()
+            if peer:
+                self._check_peer_quota(spec.request_id, occupied, existing=False)
             model_limit = self.settings.model_slots.get(spec.model, self.settings.slots)
             if (
                 len(occupied) >= self.settings.slots
@@ -370,7 +403,7 @@ class LocalLedger:
             if sum(item.memory_gb for item in occupied) + fit.required_gb > fit.available_gb:
                 raise AdmissionError("insufficient_memory", 503)
             # Sample after backend probes, immediately before the durable grant.
-            await self.policy.require(spec.workload, spec.idle_only)
+            await self.policy.require(spec.workload, spec.idle_only, peer=peer)
             taken = {item.slot_id for item in occupied}
             slot = next(i for i in range(self.settings.slots) if i not in taken)
             await self._db.execute("INSERT OR IGNORE INTO slots VALUES (?,0)", (slot,))
@@ -443,6 +476,8 @@ class LocalLedger:
                 raise AdmissionError("reservation_model_mismatch")
             fit = await self.fit_check(model)
             occupied = await self._occupied()
+            if lease.peer_origin:
+                self._check_peer_quota(lease.request_id, occupied, existing=True)
             # Recheck live resources and retain every reservation's budget.
             required = max(lease.memory_gb, fit.required_gb)
             if sum(item.memory_gb for item in occupied) - lease.memory_gb + required > (
@@ -461,6 +496,7 @@ class LocalLedger:
                 lease.idle_only,
                 additional_workload=additional,
                 additional_idle_only=idle_only,
+                peer=lease.peer_origin,
             )
             if lease.expires_at <= time.time():
                 raise AdmissionError("reservation_not_active")
@@ -523,9 +559,11 @@ class LocalLedger:
                 memory_slots = max(0, int(remaining_gb / fit.required_gb))
             except AdmissionError as exc:
                 reason, memory_slots = exc.reason, 0
-            decision = await self.policy.decision(workload, idle_only)
+            decision = await self.policy.decision(workload, idle_only, peer=peer)
             if not decision.eligible:
                 reason, memory_slots = reason or decision.reason, 0
+            if peer and self.settings.peer_max_concurrent == 0:
+                reason, memory_slots = reason or "peer_quota", 0
             if reason:
                 memory_slots = 0
             available = max(

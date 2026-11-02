@@ -1985,3 +1985,19 @@ Quorum visibility is unknown from a follower or unreachable sidecar, rather than
 falsely reporting global quorum loss; status separates enabled/reachable/write
 availability. No runtime admission or model-sharing operation reads admin metadata.
 See [Phase 8 evidence and limits](idle-herd/implementation-status.md).
+
+## 2026-11-01 — Phase 9 diagnostics remain observations under churn
+
+Seeded native mock-process tests cover 1/2/3/5 peer components, restarts, local
+inference, bounded waiters and durable results. New peer diagnostics are signed,
+worker/incarnation-bound and independently cached; absence on an older peer does
+not change discovery or local admission. Model capacity remains advisory. Concurrent
+quota tests retain worker-local resource authority across different peer origins.
+
+Dashboard review found that delayed polling failures could hide newer successful
+stream updates, and timestamp-only refreshes could create spurious peer events.
+Connection/observation guards and semantic event comparisons now prevent those
+artifacts. DOM smoke tests cover untrusted text, stream reconnect, stale status and
+disconnect. Native manager rendering and Swift builds do not establish physical
+login/sleep/wake, browser/VoiceOver or real-model acceptance; those remain explicit
+in [Phase 9 evidence](idle-herd/implementation-status.md).

@@ -161,7 +161,7 @@ async def test_service_toggle_uses_only_fixed_helper(tmp_path, monkeypatch):
     from fleet_manager.peer.models import PeerSettings
 
     calls = []
-    monkeypatch.setattr(control_router.sys, "platform", "darwin")
+    monkeypatch.setattr(control_router.service.sys, "platform", "darwin")
     monkeypatch.setattr(control_router.service, "plist_path", lambda: tmp_path / "service.plist")
     monkeypatch.setattr(
         control_router.service,
@@ -306,3 +306,87 @@ async def test_dashboard_read_only_and_browser_boundaries(tmp_path):
             assert (
                 await client.put("/v1/node/mode", headers=control, json={"mode": "paused"})
             ).status_code == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+async def test_service_api_cross_platform_scopes_and_unknown(tmp_path, monkeypatch, platform):
+    import subprocess
+
+    from fleet_manager.local_control import service
+    from fleet_manager.peer.app import create_peer_app
+    from fleet_manager.peer.models import PeerSettings
+
+    monkeypatch.setattr(service.sys, "platform", platform)
+    path = tmp_path / "service.conf"
+    monkeypatch.setattr(service, "systemd_path", lambda: path)
+    monkeypatch.setattr(service, "windows_task_path", lambda: path)
+    calls = []
+
+    def install(data_dir, **kwargs):
+        calls.append(("install", data_dir))
+        path.write_text("installed")
+        return path
+
+    def manager(*args, **kwargs):
+        calls.append(args)
+        if args[0] in ("is-enabled", "is-active"):
+            return SimpleNamespace(
+                stdout="enabled\n" if args[0] == "is-enabled" else "active\n", returncode=0
+            )
+        if args[0] == "/Query":
+            if "/XML" in args:
+                return SimpleNamespace(
+                    stdout="<Task><Settings><Enabled>true</Enabled></Settings></Task>"
+                )
+            if "/FO" in args:
+                return SimpleNamespace(stdout='"TaskName","Status"\n"task","Running"\n')
+            raise subprocess.CalledProcessError(1, args)
+        return SimpleNamespace(stdout="", returncode=0)
+
+    monkeypatch.setattr(service, "install", install)
+    monkeypatch.setattr(service, "_systemctl", manager)
+    monkeypatch.setattr(service, "_schtasks", manager)
+    app = create_peer_app(
+        PeerSettings(data_dir=str(tmp_path)),
+        backend_transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"models": []})),
+    )
+    async with app.router.lifespan_context(app):
+        credentials = app.state.control_credentials
+        read = {"Authorization": f"Bearer {credentials.read_token}"}
+        control = {"Authorization": f"Bearer {credentials.control_token}"}
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost:11435"
+        ) as client:
+            assert (
+                await client.put("/v1/node/service", headers=read, json={"enabled": True})
+            ).status_code == 403
+            assert (
+                await client.put(
+                    "/v1/node/service",
+                    headers=control,
+                    json={"enabled": True, "executable": "evil"},
+                )
+            ).status_code == 422
+            assert calls == []
+            result = await client.put("/v1/node/service", headers=control, json={"enabled": True})
+            assert result.status_code == 200
+            assert result.json()["platform"] == ("linux" if platform == "linux" else "windows")
+            assert result.json()["enabled"] is True
+            assert result.json()["running"] is True
+            assert all("--now" not in call and "/End" not in call for call in calls)
+            if platform == "win32":
+                assert any(call[0] == "/Create" and "/F" not in call for call in calls)
+            result = await client.put("/v1/node/service", headers=control, json={"enabled": False})
+            assert result.status_code == 200
+            assert all("--now" not in call and "/End" not in call for call in calls)
+
+            def failure(*args, **kwargs):
+                raise OSError("manager unavailable")
+
+            monkeypatch.setattr(service, "_systemctl", failure)
+            monkeypatch.setattr(service, "_schtasks", failure)
+            result = await client.get("/v1/node/service", headers=read)
+            assert result.status_code == 200
+            assert result.json()["enabled"] is None
+            assert result.json()["running"] is None

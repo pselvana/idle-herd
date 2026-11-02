@@ -1,6 +1,6 @@
 # Idle-Herd
 
-This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 8**.
+This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 9**.
 `uv run idle-herd` starts single-node localhost ingress and durable worker-owned
 slot reservations in one process. Opt-in authenticated peer discovery and direct
 streaming need no leader or live seed; optional admin Raft is disabled by default. It uses a
@@ -33,6 +33,13 @@ remain open; no automatic registry fallback or cross-format conversion is provid
 service for admin labels/notes only, explicit bootstrap and cached dashboard status.
 Killing every voter leaves worker admission, capacity waits and inference working.
 No automatic voter rebootstrap or membership shrink occurs after quorum loss.
+[Phase 9 native operation](docs/idle-herd/phase-9.md) adds the authenticated local
+dashboard, `idle-herd doctor --model NAME`, redacted peer diagnostics/history,
+quiet hours and per-peer concurrency limits, plus user-service configuration for
+macOS/Linux/Windows. Native-process churn tests cover 1/2/3/5 peers; real OS
+service/login/sleep/wake and GUI/hardware acceptance remain open. Use
+`idle-herd service install` then `idle-herd service enable` from a stable local
+installation; see the native operation guide for platform details.
 Native socket tests use a mock model backend; real hardware sensors and
 Ollama/hardware inference have not been verified by this implementation.
 

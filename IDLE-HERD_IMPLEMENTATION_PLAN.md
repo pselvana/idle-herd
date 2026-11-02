@@ -1,15 +1,16 @@
 # Idle-Herd — Implementation Plan
 
-> **Status:** Phases 0–8 implement native peers, worker-local admission, idle
-> policy, capacity waits, durable jobs, owner controls, GGUF sharing and optional
-> admin-only consensus. Legacy commands retain upstream behavior. Phases 9–10
-> remain future work; hardware/native lifecycle limits remain open. See
+> **Status:** Phases 0–9 implement native peers, worker-local admission, idle
+> policy, capacity waits, durable jobs, owner controls, GGUF sharing, optional
+> admin-only consensus and native operation/diagnostics/churn coverage. Legacy
+> commands retain upstream behavior. Phase 10 remains future work;
+> hardware/native lifecycle and visual acceptance gates remain open. See
 > [verification and remaining risks](docs/idle-herd/implementation-status.md).
 > **Prepared:** November 1, 2026  
 > **Primary development environment:** Visual Studio Code + OpenAI Codex IDE extension  
 > **Target:** Cross-platform, peer-to-peer, idle-aware independent LLM inference; no dedicated inference router; **fully functional with 1, 2, or 3+ intermittently connected nodes and no guaranteed Raft quorum**.
-> **Revision:** 12 — records optional native admin consensus and voter-loss
-> independence, with explicit uncertainty and verification limits.
+> **Revision:** 13 — records Phase 9 dashboard, diagnostics, native user-service
+> integrations, owner energy/contribution settings and seeded native churn evidence.
 
 This file, `IDLE-HERD_IMPLEMENTATION_PLAN.md`, is the canonical implementation plan.
 The architecture below describes the target system; completed design work does not
@@ -903,15 +904,24 @@ Linux/Windows service and physical LAN acceptance remain unverified.
 
 ### Phase 9 — Native desktop polish, diagnostics, chaos tests, release readiness
 
-- [ ] Show each peer, platform/backend, model inventory, sensor provenance, slot admissions, waiters, replicated job state, optional Raft leader/quorum, partitions and last seen in the existing dashboard; ensure local menu and dashboard use the same event semantics.
-- [ ] Add friendly `idle-herd doctor` with machine-specific capability/model fit explanations, permission/network health, and 'why isn't my machine eligible?' details.
-- [ ] Add energy-aware/quiet-hours settings and peer contribution quotas; ensure owner activity always overrides optimistic availability. Add privacy-aware, opt-in notifications and basic per-job local history.
-- [ ] Optionally prototype native Windows notification-area and Linux tray clients from the same local endpoints; they must not block the native CLI/API release.
-- [ ] Instrument request ID/lease ID/worker incarnation, retry/unknown outcome and model transfer without storing prompts by default.
-- [ ] Run native-process churn tests with 1, 2 and 3+ nodes, including all optional voters offline, random node flaps, restarts, sleep/wake, and partitions.
-- [ ] Add native install/autostart docs, threat model, backups, rolling upgrade, upstream license attribution, performance benchmarks, accessibility and operational troubleshooting.
+- [x] Authenticated dashboard shows local and optional cached peer platform/backend, model inventory, sensor provenance, slot counts/waiters/jobs, optional admin leader/quorum and last seen. Unknown diagnostics on older/offline peers remain unknown; reachability is not proof of a partition. Menu and dashboard consume the same versioned events.
+- [x] `idle-herd doctor [--model NAME] [--json]` explains backend/model fit, policy, sensor provenance, peer visibility and authentication; recommendations do not claim unperformed permission/firewall audits.
+- [x] Owner-persisted AC/battery controls, quiet hours and atomic per-origin concurrent contribution quotas; owner activity overrides optimistic peer policy. Opt-in generic browser notifications and redacted local job history.
+- [x] Optional Windows/Linux tray prototypes deferred; native CLI/API and user services remain sufficient.
+- [x] Redacted hashed request correlation, lease ID, worker incarnation/generation, retry/durability/duplicate consent, unknown outcomes and transfer progress in local status; no prompts/results or tokens in these surfaces.
+- [x] Seeded 1/2/3/5 native-peer RPC partitions, flaps/restarts, local inference, live waits and durable result recovery. Existing all-voter-loss and crash fencing tests retained.
+- [x] Native user-service configuration/install/autostart, threat boundaries, offline backups, rolling upgrades, MIT attribution, mock contention benchmark, accessibility design and troubleshooting documented.
+- [ ] Physical macOS/Linux/Windows login/restart/sleep/wake/roaming, real-model hardware inference, visual/VoiceOver QA and signed installers remain native acceptance gates. Mocked manager commands and sampling gaps are not physical OS evidence.
 
-**Acceptance:** Every core API remains usable with only one worker alive regardless of prior cluster size. macOS menu bar is stable and accessible, has a trustworthy state after disconnect/reconnect, and is not required for the daemon to run. Cross-platform service tests identify actual verified platforms.
+Implementation and boundaries: [Phase 9 operation](docs/idle-herd/phase-9.md),
+[policy](docs/idle-herd/phase-9-policy.md), [services](docs/idle-herd/phase-9-services.md)
+and [exact verification results](docs/idle-herd/implementation-status.md).
+
+**Acceptance status:** Native mock-process tests show that eligible local inference,
+leases, waits and durable results survive prior 1/2/3/5-peer membership and isolated
+components; no quorum is required. UI service separation, authenticated control and
+reconnection are tested below the GUI. Physical OS/desktop acceptance remains open.
+No Phase 10 implementation or publishing is included.
 
 ### Phase 10 — Dockerization and container deployment (**LAST PHASE**)
 
@@ -1190,14 +1200,15 @@ limitations rather than treating roadmap guarantees as implemented behavior.
 - OpenAI Codex VS Code extension: https://marketplace.visualstudio.com/items?itemName=OpenAI.chatgpt
 - Codex IDE workflow: https://learn.chatgpt.com/docs/codex/ide
 
-**Revision:** November 1, 2026 (v12). Records Phase 0–8 implementation,
+**Revision:** November 1, 2026 (v13). Records Phase 0–9 implementation,
 including worker-local idle policy, native sensor interfaces, origin capacity waits
 and durable jobs with acknowledged peer copies. Hardware sensor
 and backend acceptance and documented recovery/fit limits remain explicit.
 Phase 7 implements standalone GGUF sharing with declared compatibility limits;
 real GGUF/MLX load and physical GUI/service acceptance remain open. Phase 8 adds
-optional native admin-only Raft and voter-loss tests. Phases 9–10 remain future
-work; optional Raft stays outside inference and
+optional native admin-only Raft and voter-loss tests. Phase 9 adds native operation,
+diagnostics and seeded churn coverage; physical OS/GUI/hardware gates remain open.
+Phase 10 remains future work; optional Raft stays outside inference and
 Docker/Compose stays in Phase 10. Any upstream guidance suggesting an always-on
 router or mandatory Raft must be interpreted using current §§0–4, 8–9, 11–12.
 

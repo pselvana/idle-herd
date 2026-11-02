@@ -1,0 +1,15 @@
+:root { color-scheme: light dark; font: 15px/1.55 system-ui, sans-serif; }
+body { margin: 0; background: light-dark(#f4f6f8, #151a22); color: light-dark(#172332, #e8edf5); }
+main { max-width: 1260px; margin: auto; padding: 28px; }
+h1 { margin-bottom: 0; } h2 { font-size: 1.1rem; margin-top: 0; }
+section, header { background: light-dark(white, #202936); padding: 22px; border-radius: 12px; margin-bottom: 18px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.grid section { margin: 0; } .grid { margin-bottom: 18px; }
+button, input, select { font: inherit; padding: 8px 12px; border: 1px solid #8190a4; border-radius: 6px; }
+button { cursor: pointer; } :focus-visible { outline: 3px solid #4e91e5; outline-offset: 3px; }
+form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.scroll { overflow-x: auto; } table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+caption { text-align: left; padding-bottom: 12px; } th, td { text-align: left; padding: 10px; border-bottom: 1px solid #8190a455; vertical-align: top; max-width: 360px; overflow-wrap: anywhere; }
+.note { color: light-dark(#4a596b, #bdc9db); font-size: .9rem; }
+#message { font-weight: 650; } @media(max-width: 600px) { main { padding: 12px; } section, header { padding: 15px; } }

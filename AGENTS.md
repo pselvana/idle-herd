@@ -1,6 +1,6 @@
 # AGENTS.md — Ollama Herd
 
-## Idle-Herd fork instructions (Phase 8)
+## Idle-Herd fork instructions (Phase 9)
 
 This checkout is the Idle-Herd fork. The upstream guidance below is retained;
 these fork rules govern the architecture where it differs. `idle-herd` now runs
@@ -15,6 +15,9 @@ single-file Ollama adapter, explicit permission, resumable transfers and limits.
 See [Phase 8 optional admin consensus](docs/idle-herd/phase-8.md) for the separate
 native Go service, explicit bootstrap and voter-loss evidence. Zero voters remains
 the default; no inference or model-sharing path contacts consensus.
+See [Phase 9 native operation](docs/idle-herd/phase-9.md) for the dashboard, doctor,
+user service installers, quiet hours, peer quotas and native churn evidence.
+Physical OS lifecycle and real-backend acceptance remain explicit open gates.
 Legacy `herd` / `herd-node` retain upstream behavior. Start at
 [implementation status](docs/idle-herd/implementation-status.md)
 and the canonical [implementation plan](IDLE-HERD_IMPLEMENTATION_PLAN.md).

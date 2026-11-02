@@ -424,6 +424,13 @@ def create_peer_app(
             await jobs.open()
             stack.push_async_callback(jobs.close)
 
+            from fleet_manager.peer.diagnostics import PeerDiagnostics
+
+            app.state.peer_diagnostics = PeerDiagnostics(
+                app, ttl=settings.peer_ttl, interval=settings.peer_interval
+            )
+            diagnostics_task = asyncio.create_task(app.state.peer_diagnostics.run())
+
             async def inventory_loop():
                 while True:
                     await asyncio.sleep(2)
@@ -442,6 +449,9 @@ def create_peer_app(
                 # Transfer load probes use waiters, traces and the ledger. Stop them
                 # before the exit stack closes those independently owned services.
                 await sharing.close()
+                diagnostics_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await diagnostics_task
                 sensor_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await sensor_task

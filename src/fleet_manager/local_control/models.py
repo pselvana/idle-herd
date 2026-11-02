@@ -52,6 +52,12 @@ class PreferencesValues(Strict):
     battery_floor_percent: float = Field(ge=0, le=100)
     require_ac: bool
     reserve_memory_gb: float = Field(ge=0)
+    quiet_hours_enabled: bool = False
+    quiet_hours_start_minute: int = Field(default=1320, ge=0, le=1439)
+    quiet_hours_end_minute: int = Field(default=420, ge=0, le=1439)
+    peer_max_concurrent: int = Field(default=128, ge=0, le=128)
+    notifications_enabled: bool = False
+    hide_job_counts: bool = False
 
 
 class PreferencesPatch(Strict):
@@ -65,6 +71,12 @@ class PreferencesPatch(Strict):
     battery_floor_percent: float | None = Field(default=None, ge=0, le=100)
     require_ac: bool | None = None
     reserve_memory_gb: float | None = Field(default=None, ge=0)
+    quiet_hours_enabled: bool | None = None
+    quiet_hours_start_minute: int | None = Field(default=None, ge=0, le=1439)
+    quiet_hours_end_minute: int | None = Field(default=None, ge=0, le=1439)
+    peer_max_concurrent: int | None = Field(default=None, ge=0, le=128)
+    notifications_enabled: bool | None = None
+    hide_job_counts: bool | None = None
 
 
 class PreferencesUpdate(Strict):
@@ -140,6 +152,14 @@ class NodeStatus(Strict):
     slots: SlotStatus
     peers: PeerCounts
     jobs: JobCounts
+    worker_incarnation: str | None = None
+    platform: str = "unknown"
+    waiters: int = 0
+    peer_details: list["PeerDetail"] = Field(default_factory=list)
+    job_history: list["JobSummary"] = Field(default_factory=list)
+    worker_leases: list["WorkerLease"] = Field(default_factory=list)
+    notifications_enabled: bool = False
+    hide_job_counts: bool = False
     transfers: list["TransferSummary"] = Field(default_factory=list)
     model_inventory: list["InventorySummary"] = Field(default_factory=list)
     coordination: CoordinationStatus = Field(default_factory=CoordinationStatus)
@@ -173,6 +193,48 @@ class JobSummary(Strict):
     updated_at: float
     cancel_requested: bool
     worker_id: str | None = None
+    effective_durability: str | None = None
+    durable_copies: int = 0
+    attempt_count: int = 0
+    possible_duplicates: bool = False
+
+
+class PeerDetail(Strict):
+    worker_id: str | None
+    local: bool = False
+    reachable: bool
+    incarnation: str | None = None
+    platform: str = "unknown"
+    backend: str = "unknown"
+    models: list[str] = Field(default_factory=list)
+    observed_at: float | None = None
+    reason: str | None = None
+    diagnostics_observed_at: float | None = None
+    sensor_source: str | None = None
+    activity: str | None = None
+    eligible: bool | None = None
+    eligibility_reason: str | None = None
+    slots: SlotStatus | None = None
+    waiters: int | None = None
+    queued_jobs: int | None = None
+    running_jobs: int | None = None
+    replicated_jobs: int | None = None
+
+
+class DiagnosticCheck(Strict):
+    code: str
+    title: str
+    state: Literal["ok", "attention", "unknown"]
+    detail: str
+    remedy: str | None = None
+
+
+class ModelFit(Strict):
+    model: str
+    eligible: bool
+    reason: str | None
+    observed_available_slots: int
+    observed_at: float
 
 
 class WorkerLease(Strict):
@@ -183,6 +245,10 @@ class WorkerLease(Strict):
     peer_origin: bool
     created_at: float
     updated_at: float
+    lease_id: str | None = None
+    request_id_hash: str | None = None
+    worker_incarnation: str | None = None
+    slot_generation: int | None = None
 
 
 class JobsResponse(Strict):
@@ -197,6 +263,12 @@ class Diagnostics(Strict):
     peer_discovery: Literal["enabled", "disabled"]
     peer_error: bool
     quarantined_slots: int
+    platform: str = "unknown"
+    worker_id: str | None = None
+    worker_incarnation: str | None = None
+    observed_at: float = 0
+    checks: list[DiagnosticCheck] = Field(default_factory=list)
+    model_fit: ModelFit | None = None
 
 
 class Event(Strict):
@@ -217,7 +289,7 @@ class ServiceUpdate(Strict):
 class ServiceState(Strict):
     version: Literal[1] = 1
     supported: bool
-    platform: Literal["macos", "unsupported"]
+    platform: Literal["macos", "linux", "windows", "unsupported"]
     installed: bool | None
     enabled: bool | None
     running: bool | None

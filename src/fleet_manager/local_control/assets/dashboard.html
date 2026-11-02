@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Idle-Herd · Local dashboard</title><style>STYLE</style></head><body><main>
+<header><h1>Idle-Herd</h1><p>Local worker dashboard · Every peer runs independently.</p>
+<form id="connect"><label for="token">Read token</label><input id="token" type="password" autocomplete="off" required>
+<button type="submit">Connect</button><button id="disconnect" type="button">Disconnect</button></form>
+<p class="note">Use the read token from control-credentials.json in your Idle-Herd data directory. It stays in this tab's memory.
+Owner changes use the authenticated CLI or menu bar.</p><p id="message" role="status" aria-live="polite">Disconnected</p>
+<label><input type="checkbox" id="notify"> Enable health notifications for this tab</label>
+<p class="note" id="notification-note">Off by default. Requires the daemon notification preference and browser permission.</p></header>
+<div class="grid"><section aria-labelledby="local-title"><h2 id="local-title">Local admission</h2><pre id="overview">unknown</pre>
+<p class="note">Offline keeps eligible localhost inference. Pause rejects new inference. Existing execution drains.</p></section>
+<section aria-labelledby="resource-title"><h2 id="resource-title">Resources &amp; sensors</h2><pre id="resources">unknown</pre></section></div>
+<section><h2>Peers in this worker's view</h2><p class="note">Unreachable peers have unknown current state. Diagnostics are cached observations, never grants. Older peers without status support show unknown values.</p>
+<div class="scroll"><table><caption>Last direct observations, including stale model inventories</caption><thead><tr><th>Worker</th><th>Reachability</th><th>Platform</th><th>Backend</th><th>Models</th><th>Last seen</th><th>Slots</th><th>Waiters</th><th>Jobs</th><th>Sensor</th><th>Eligibility</th><th>Diagnostics sampled</th></tr></thead><tbody id="peers"></tbody></table></div></section>
+<section><h2>Capacity &amp; diagnostics</h2><label for="model">Model</label> <select id="model"></select> <button id="inspect">Inspect model</button>
+<p id="capacity-note">unknown</p><div class="scroll"><table><caption>Advisory slot observations, never reservations</caption><thead><tr><th>Worker</th><th>Reachability</th><th>Freshness</th><th>Slots</th><th>Eligible</th><th>Reason</th></tr></thead><tbody id="capacity"></tbody></table></div>
+<details><summary>Why is this machine ineligible?</summary><pre id="diagnostics">unknown</pre></details><pre id="coordination">unknown</pre></section>
+<section><h2>Worker leases</h2><p class="note">Worker-issued authority only. Correlation IDs are hashed; reservation credentials and prompts are excluded.</p>
+<div class="scroll"><table><caption>Current local reservations and execution</caption><thead><tr><th>Lease</th><th>Request hash</th><th>Incarnation</th><th>Generation</th><th>Model</th><th>State</th><th>Origin</th></tr></thead><tbody id="leases"></tbody></table></div></section>
+<section><h2>Local job history</h2><p class="note">Latest 50 origin journal records. Accepted durable copies are historical acknowledgments, not proof that copies are currently reachable. Recovery is at least once.</p>
+<div class="scroll"><table><caption>Job metadata; inputs and results stay out of status</caption><thead><tr><th>Job</th><th>Model</th><th>State</th><th>Worker</th><th>Durability</th><th>Copies acknowledged</th><th>Attempts</th><th>Duplicate consent</th><th>Updated</th></tr></thead><tbody id="jobs"></tbody></table></div></section>
+<section><h2>Model transfers</h2><div class="scroll"><table><caption>Authorized copies and resumable progress</caption><thead><tr><th>Model</th><th>State</th><th>Progress</th><th>Reason</th></tr></thead><tbody id="transfers"></tbody></table></div></section>
+<footer class="note">No cluster-wide completeness or exactly-once guarantee. Unknown measurements stay unknown. Quitting the UI leaves the daemon running.</footer>
+</main><script>SCRIPT</script></body></html>

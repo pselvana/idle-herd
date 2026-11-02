@@ -10,7 +10,7 @@ import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 import typer
@@ -232,7 +232,7 @@ cli.add_typer(service_cli, name="service")
 
 
 def _control_request(
-    method: str, endpoint: str, payload: dict | None = None, *, prefix: str = "node"
+    method: str, endpoint: str, payload: dict | None = None, *, prefix: str = "node", render=None
 ):
     try:
         credentials = load_or_create_credentials(PeerSettings().data_dir, create=False)
@@ -247,7 +247,8 @@ def _control_request(
         if response.is_error:
             typer.echo(f"Local control request failed (HTTP {response.status_code}).", err=True)
             raise typer.Exit(1)
-        typer.echo(json.dumps(response.json(), indent=2))
+        data = response.json()
+        typer.echo(render(data) if render else json.dumps(data, indent=2))
     except (OSError, KeyError, ValueError, httpx.HTTPError):
         typer.echo(
             "Cannot access local control API or credentials; is the daemon running?", err=True
@@ -339,9 +340,30 @@ def jobs():
 
 
 @cli.command()
-def doctor():
-    """Show local diagnostics."""
-    _control_request("GET", "diagnostics")
+def doctor(
+    model: str = typer.Option(None, "--model", help="Explain live local fit for this model."),
+    as_json: bool = typer.Option(False, "--json", help="Print the versioned diagnostic response."),
+):
+    """Explain backend readiness, sensor permissions and why work is blocked."""
+    if model is not None and not 1 <= len(model) <= 512:
+        raise typer.BadParameter("model must contain 1–512 characters")
+
+    def friendly(data):
+        lines = [f"Idle-Herd doctor · {data['platform']}"]
+        for check in data["checks"]:
+            lines.append(f"[{check['state']}] {check['title']}: {check['detail']}")
+            if check.get("remedy"):
+                lines.append(f"  Try: {check['remedy']}")
+        return "\n".join(lines)
+
+    query = "?" + urlencode({"model": model}) if model is not None else ""
+    _control_request("GET", "diagnostics" + query, render=None if as_json else friendly)
+
+
+@cli.command()
+def peers():
+    """Show last direct peer observations; unreachable state remains unknown."""
+    _control_request("GET", "peers")
 
 
 @cli.command("cancel")
@@ -425,20 +447,20 @@ def _service_action(action):
 
 @service_cli.command("install")
 def service_install():
-    """Write a launch agent without starting or registering it."""
+    """Write user service configuration without registering it."""
     settings = PeerSettings()
     _service_action(lambda: service.install(settings.data_dir, settings=settings))
 
 
 @service_cli.command("enable")
 def service_enable():
-    """Enable launch at login and register the installed agent."""
+    """Enable login startup and start the installed user service."""
     _service_action(service.enable)
 
 
 @service_cli.command("disable")
 def service_disable():
-    """Disable launch at login and unload the user service."""
+    """Disable launch at login and stop the user service."""
     _service_action(service.disable)
 
 
@@ -451,7 +473,7 @@ def service_start():
 
 @service_cli.command("status")
 def service_status():
-    """Inspect launchd registration and process state."""
+    """Inspect user service registration and process state."""
     _service_action(service.status)
 
 

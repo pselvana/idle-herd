@@ -163,9 +163,9 @@ import IdleHerdCore
         MenuBarExtra {
             ContentView(model: model).onAppear { model.start() }
         } label: {
-            Label(hideCount || !model.connected ? "Idle-Herd" : "Idle-Herd \(model.count)", systemImage: model.connected ? "circle.grid.2x2.fill" : "exclamationmark.circle")
+            Label(hideCount || (model.status["hide_job_counts"] as? Bool == true) || !model.connected ? "Idle-Herd" : "Idle-Herd \(model.count)", systemImage: model.connected ? "circle.grid.2x2.fill" : "exclamationmark.circle")
                 .onAppear { model.start() }
-                .accessibilityLabel(model.connected ? "Idle-Herd, \(model.count) local jobs" : "Idle-Herd, disconnected")
+                .accessibilityLabel(model.connected ? ((hideCount || model.status["hide_job_counts"] as? Bool == true) ? "Idle-Herd, connected" : "Idle-Herd, \(model.count) local jobs") : "Idle-Herd, disconnected")
         }.menuBarExtraStyle(.window)
     }
 }
@@ -180,9 +180,9 @@ struct ContentView: View {
     @State private var retryTransfer: ModelTransfer?
     @State private var diagnostics = ""
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        ScrollView { VStack(alignment: .leading, spacing: 9) {
             HStack { Text("Idle-Herd").font(.headline); Spacer(); Text(model.connected ? "Connected" : "Disconnected · stale").foregroundStyle(model.connected ? Color.secondary : Color.orange) }
-            Text("Mode: \(model.snapshot?.mode.mode ?? "unknown") · Eligibility: \(model.eligibility)")
+            Text("Mode: \(model.snapshot?.mode.mode ?? "unknown") · Peer background: \(model.eligibility)")
             if let last = model.lastUpdate { Text("Last updated \(last.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.secondary) }
             Divider()
             Text("LOCAL JOBS").font(.caption.bold())
@@ -213,7 +213,19 @@ struct ContentView: View {
             Text("Resource sample: \(model.telemetryAge) · \(model.value("resources", "source"))").font(.caption)
             Text("CLUSTER (reachable estimate)").font(.caption.bold())
             Text("Known: \(model.value("peers", "known")) · Reachable: \(model.value("peers", "reachable")) · Stale: \(model.value("peers", "stale"))")
-            Text("Remote slots indicated: \(model.value("peers", "observed_available_slots"))")
+            Text("Remote slots indicated: \(model.value("peers", "observed_available_slots")) · Capacity waiters: \(model.value("waiters"))")
+            if let peers = model.status["peer_details"] as? [[String: Any]], !peers.isEmpty {
+                DisclosureGroup("Peer details") {
+                    ForEach(Array(peers.enumerated()), id: \.offset) { _, peer in
+                        VStack(alignment: .leading) {
+                            Text("\(peer["worker_id"] as? String ?? "unknown") · \((peer["reachable"] as? Bool) == true ? "reachable" : "unreachable")")
+                            Text("Platform: \(peer["platform"] as? String ?? "unknown") · Backend: \(peer["backend"] as? String ?? "unknown") · Models: \((peer["models"] as? [String])?.joined(separator: ", ") ?? "unknown")").font(.caption)
+                            Text("Incarnation: \(peer["incarnation"] as? String ?? "unknown") · Observed: \((peer["observed_at"] as? Double).map { Date(timeIntervalSince1970: $0).formatted() } ?? "unknown")").font(.caption)
+                            if let reason = peer["reason"] as? String { Text(reason).font(.caption) }
+                        }.textSelection(.enabled)
+                    }
+                }
+            }
             Text("MODEL INVENTORY & TRANSFERS").font(.caption.bold())
             if let error = model.sharingError { Text(error).font(.caption).foregroundStyle(.orange) }
             if model.inventory.isEmpty && model.sharingError == nil { Text("No models in inventory").font(.caption) }
@@ -265,7 +277,7 @@ struct ContentView: View {
                 Spacer()
                 Button("Quit UI") { NSApplication.shared.terminate(nil) }
             }
-        }.padding(14).frame(width: 440)
+        }.padding(14) }.frame(width: 440, height: 650)
             .alert(confirm == "offline" ? "Go offline?" : "Pause new inference?", isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } })) {
                 Button(confirm == "offline" ? "Go offline" : "Pause") { if let mode = confirm { model.changeMode(mode) }; confirm = nil }
                 Button("Cancel", role: .cancel) { confirm = nil }
@@ -285,7 +297,14 @@ struct ContentView: View {
         do {
             let data = try await model.client.fetch("v1/node/diagnostics")
             // Display only reason/provenance fields, never arbitrary diagnostic payloads.
-            diagnostics = ["service", "peer_discovery"].map { "\($0): \(data[$0] as? String ?? "unknown")" }.joined(separator: "\n")
+            let checks = data["checks"] as? [[String: Any]] ?? []
+            diagnostics = checks.isEmpty ? "No diagnostic checks available." : checks.map { check in
+                let title = check["title"] as? String ?? "Check"
+                let state = check["state"] as? String ?? "unknown"
+                let detail = check["detail"] as? String ?? ""
+                let remedy = check["remedy"] as? String ?? ""
+                return "\(title): \(state)\n\(detail)" + (remedy.isEmpty ? "" : "\nRemedy: \(remedy)")
+            }.joined(separator: "\n\n")
         } catch { diagnostics = error.localizedDescription }
         showingDiagnostics = true
     }
@@ -302,10 +321,15 @@ struct PreferencesView: View {
     @State private var batteryFloor = ""
     @State private var backgroundPolicy = "idle_only"
     @State private var requireAC = false
+    @State private var quietHours = false
+    @State private var quietStart = ""
+    @State private var quietEnd = ""
+    @State private var peerMax = ""
+    @State private var notificationsEnabled = false
     @State private var serviceEnabled: Bool?
     @State private var serviceSupported = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        ScrollView { VStack(alignment: .leading, spacing: 12) {
             Text("Preferences").font(.headline)
             Toggle("Hide job count in menu bar", isOn: $hideCount)
             Toggle("Launch menu bar app at login", isOn: $launchAtLogin).onChange(of: launchAtLogin) { value in
@@ -319,6 +343,13 @@ struct PreferencesView: View {
             TextField("Idle time (seconds)", text: $idleSeconds)
             TextField("Battery floor (%)", text: $batteryFloor)
             Toggle("Require AC power", isOn: $requireAC)
+            Toggle("Block peer work during quiet hours", isOn: $quietHours)
+            Text("Host local time; equal start and end means all day.").font(.caption)
+            TextField("Quiet start (minutes after midnight, 0–1439)", text: $quietStart)
+            TextField("Quiet end (minutes after midnight, 0–1439)", text: $quietEnd)
+            TextField("Maximum concurrent work per peer (0–128)", text: $peerMax)
+            Toggle("Enable dashboard notifications", isOn: $notificationsEnabled)
+            Text("Notifications are available in the browser dashboard and require browser permission.").font(.caption)
             Button("Save daemon policy") { Task { await savePolicy() } }.disabled(version == nil)
             if serviceSupported {
                 HStack {
@@ -337,7 +368,7 @@ struct PreferencesView: View {
             }
             Text(message).font(.caption)
             Button("Close") { dismiss() }
-        }.padding().frame(width: 420).task { await loadPolicy() }
+        }.padding() }.frame(width: 420, height: 650).task { await loadPolicy() }
     }
     func loadPolicy() async {
         do {
@@ -348,6 +379,12 @@ struct PreferencesView: View {
             batteryFloor = String(describing: values["battery_floor_percent"] ?? "")
             backgroundPolicy = values["background_policy"] as? String ?? "idle_only"
             requireAC = values["require_ac"] as? Bool ?? false
+            quietHours = values["quiet_hours_enabled"] as? Bool ?? false
+            quietStart = String(describing: values["quiet_hours_start_minute"] ?? 1320)
+            quietEnd = String(describing: values["quiet_hours_end_minute"] ?? 420)
+            peerMax = String(describing: values["peer_max_concurrent"] ?? 128)
+            notificationsEnabled = values["notifications_enabled"] as? Bool ?? false
+            hideCount = values["hide_job_counts"] as? Bool ?? false
             if let service = try? await model.client.fetch("v1/node/service") {
                 serviceSupported = service["supported"] as? Bool ?? false
                 serviceEnabled = service["enabled"] as? Bool
@@ -358,8 +395,13 @@ struct PreferencesView: View {
         guard let revision = version, let idle = Double(idleSeconds), let floor = Double(batteryFloor), idle.isFinite, floor.isFinite else {
             message = "Enter valid numeric idle time and battery floor."; return
         }
+        guard let start = Int(quietStart), (0...1439).contains(start),
+              let end = Int(quietEnd), (0...1439).contains(end),
+              let quota = Int(peerMax), (0...128).contains(quota) else {
+            message = "Enter quiet hours from 0 to 1439 and a peer limit from 0 to 128."; return
+        }
         do {
-            try await model.client.updatePreferences(version: revision, values: ["idle_seconds": idle, "battery_floor_percent": floor, "background_policy": backgroundPolicy, "require_ac": requireAC])
+            try await model.client.updatePreferences(version: revision, values: ["idle_seconds": idle, "battery_floor_percent": floor, "background_policy": backgroundPolicy, "require_ac": requireAC, "quiet_hours_enabled": quietHours, "quiet_hours_start_minute": start, "quiet_hours_end_minute": end, "peer_max_concurrent": quota, "notifications_enabled": notificationsEnabled, "hide_job_counts": hideCount])
             await loadPolicy(); message = "Daemon policy saved."
         } catch { message = error.localizedDescription; await loadPolicy() }
     }

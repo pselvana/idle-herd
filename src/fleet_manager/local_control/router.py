@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import re
+import platform
 import subprocess
-import sys
 import time
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from fleet_manager.local_control import service
 from fleet_manager.local_control.auth import authorize
+from fleet_manager.local_control.diagnostics import diagnose
+from fleet_manager.local_control.diagnostics import redacted_model_name as _model_name
 from fleet_manager.local_control.model_sharing import transfer_summaries
 from fleet_manager.local_control.models import (
     BackendStatus,
@@ -28,6 +28,7 @@ from fleet_manager.local_control.models import (
     ModeUpdate,
     NodeStatus,
     PeerCounts,
+    PeerDetail,
     PreferencesState,
     PreferencesUpdate,
     ResourceStatus,
@@ -43,13 +44,6 @@ from fleet_manager.peer.coordination import (
     MetadataView,
 )
 from fleet_manager.peer.jobs import JobConflict
-
-
-def _model_name(value: str) -> str:
-    # Local model paths can expose user directories; ordinary registry names remain useful.
-    if value.startswith(("/", "~", "\\")) or (len(value) > 2 and value[1:3] in (":/", ":\\")):
-        return "[local model]"
-    return value
 
 
 def create_router() -> APIRouter:
@@ -73,6 +67,10 @@ def create_router() -> APIRouter:
                     updated_at=record.updated_at,
                     cancel_requested=record.cancel_requested,
                     worker_id=record.attempts[-1].worker_id if record.attempts else None,
+                    effective_durability=record.effective_durability,
+                    durable_copies=(1 + len(record.acks)) if record.accepted else 0,
+                    attempt_count=len(record.attempts),
+                    possible_duplicates=record.submission.retry_policy.allow_possible_duplicates,
                 )
                 for record in records
                 if record.origin_id == request.app.state.ledger.worker_id
@@ -90,10 +88,11 @@ def create_router() -> APIRouter:
         mode = ModeState.model_validate(await state.ledger.mode_state())
         jobs = await summaries(request)
         leases = jobs.worker_leases
-        decision = await state.idle_policy.decision("background")
+        decision = await state.idle_policy.decision("background", peer=True)
         peers = state.directory.snapshot() if state.directory else []
         node = state.registry.get_node(state.ledger.worker_id)
         signal = decision.signal
+        settings = state.ledger.settings
         if mode.mode != "auto":
             decision = decision.model_copy(
                 update={
@@ -101,6 +100,10 @@ def create_router() -> APIRouter:
                     "reason": "manual_" + mode.mode,
                     "state": "ineligible",
                 }
+            )
+        elif getattr(settings, "peer_max_concurrent", 128) == 0:
+            decision = decision.model_copy(
+                update={"eligible": False, "reason": "peer_quota", "state": "ineligible"}
             )
         backend_state = (
             "unknown" if node is None else ("offline" if node.status == "offline" else "online")
@@ -114,10 +117,103 @@ def create_router() -> APIRouter:
                 (item.state if hasattr(item, "state") else item["state"]) == name for item in leases
             )
 
+        observed = time.time()
+        local_platform = f"{platform.system()} {platform.machine()}"
+        local_models = (
+            [_model_name(m) for m in node.ollama.models_available] if node and node.ollama else []
+        )
+        details = [
+            PeerDetail(
+                worker_id=state.ledger.worker_id,
+                local=True,
+                reachable=True,
+                incarnation=getattr(state.ledger, "incarnation", None),
+                platform=local_platform,
+                backend="ollama",
+                models=local_models,
+                observed_at=node.last_heartbeat if node else None,
+                reason="backend_unavailable" if backend_state != "online" else None,
+                diagnostics_observed_at=observed,
+                sensor_source=signal.source,
+                activity=decision.activity,
+                eligible=decision.eligible,
+                eligibility_reason=decision.reason,
+                slots=SlotStatus(
+                    total=state.ledger.settings.slots,
+                    occupied=len(leases),
+                    reserved=count("reserved"),
+                    running=count("running"),
+                    quarantined=count("quarantined"),
+                ),
+                waiters=getattr(state, "waiters", None).pending_count()
+                if getattr(state, "waiters", None)
+                else 0,
+                queued_jobs=sum(
+                    j.state in {"queued", "reserving", "retry_pending"} for j in jobs.jobs
+                ),
+                running_jobs=sum(j.state == "running" for j in jobs.jobs),
+                replicated_jobs=sum(j.effective_durability == "replicated" for j in jobs.jobs),
+            )
+        ]
+        for peer in peers:
+            reachable = mode.mode != "offline" and peer.reachable
+            descriptor = peer.descriptor
+            cache = getattr(state, "peer_diagnostics", None)
+            observation = (
+                cache.cached(peer.worker_id, descriptor.incarnation)
+                if reachable and cache and descriptor
+                else None
+            )
+            details.append(
+                PeerDetail(
+                    worker_id=peer.worker_id,
+                    reachable=reachable,
+                    incarnation=descriptor.incarnation if descriptor else None,
+                    models=[_model_name(m) for m in observation.models]
+                    if observation
+                    else ([_model_name(m.name) for m in descriptor.models] if descriptor else []),
+                    platform=observation.platform if observation else "unknown",
+                    backend=observation.backend if observation else "unknown",
+                    observed_at=peer.observed_at,
+                    diagnostics_observed_at=observation.observed_at if observation else None,
+                    sensor_source=observation.sensor_source if observation else None,
+                    activity=observation.activity if observation else None,
+                    eligible=observation.eligible if observation else None,
+                    eligibility_reason=observation.eligibility_reason if observation else None,
+                    slots=SlotStatus(
+                        total=observation.total_slots,
+                        occupied=observation.reserved_slots
+                        + observation.running_slots
+                        + observation.quarantined_slots,
+                        reserved=observation.reserved_slots,
+                        running=observation.running_slots,
+                        quarantined=observation.quarantined_slots,
+                    )
+                    if observation
+                    else None,
+                    waiters=observation.waiters if observation else None,
+                    queued_jobs=observation.queued_jobs if observation else None,
+                    running_jobs=observation.running_jobs if observation else None,
+                    replicated_jobs=observation.replicated_jobs if observation else None,
+                    reason=None
+                    if reachable
+                    else ("manual_offline" if mode.mode == "offline" else "unreachable_or_stale"),
+                )
+            )
+        waiters = getattr(state, "waiters", None)
+
         return NodeStatus(
             worker_id=state.ledger.worker_id,
             mode=mode,
-            observed_at=time.time(),
+            observed_at=observed,
+            worker_incarnation=getattr(state.ledger, "incarnation", None),
+            platform=local_platform,
+            peer_details=details,
+            waiters=waiters.pending_count() if waiters else 0,
+            job_history=sorted(jobs.jobs, key=lambda item: item.updated_at, reverse=True)[:50],
+            worker_leases=leases,
+            notifications_enabled=getattr(settings, "notifications_enabled", False),
+            hide_job_counts=getattr(settings, "hide_job_counts", False),
             idle=IdleStatus(
                 **decision.model_dump(
                     include={
@@ -145,9 +241,7 @@ def create_router() -> APIRouter:
             ),
             backend=BackendStatus(
                 state=backend_state,
-                models_available=[_model_name(m) for m in node.ollama.models_available]
-                if node and node.ollama
-                else [],
+                models_available=local_models,
                 models_loaded=[_model_name(m.name) for m in node.ollama.models_loaded]
                 if node and node.ollama
                 else [],
@@ -209,6 +303,11 @@ def create_router() -> APIRouter:
         authorize(request)
         return await summaries(request)
 
+    @router.get("/peers", response_model=list[PeerDetail])
+    async def peers(request: Request):
+        authorize(request)
+        return (await snapshot(request)).peer_details
+
     @router.post("/jobs/{job_id}/cancel", response_model=JobSummary)
     async def cancel(job_id: str, request: Request):
         authorize(request, control=True)
@@ -244,42 +343,21 @@ def create_router() -> APIRouter:
         return await request.app.state.ledger.update_preferences(spec)
 
     @router.get("/diagnostics", response_model=Diagnostics)
-    async def diagnostics(request: Request):
+    async def diagnostics(
+        request: Request, model: str | None = Query(default=None, min_length=1, max_length=512)
+    ):
         authorize(request)
         status = await snapshot(request)
-        return Diagnostics(
-            peer_discovery="enabled" if request.app.state.directory else "disabled",
-            peer_error=bool(request.app.state.peer_error),
-            quarantined_slots=status.slots.quarantined,
-        )
+        return await diagnose(request.app, status, model)
 
     def service_state() -> ServiceState:
-        if sys.platform != "darwin":
-            return ServiceState(
-                supported=False, platform="unsupported", installed=None, enabled=None, running=None
-            )
-        installed = service.plist_path().is_file()
-        enabled = None
-        running = None
-        domain = f"gui/{os.getuid()}"
-        try:
-            disabled = service._launchctl("print-disabled", domain).stdout
-            match = re.search(
-                r'"' + re.escape(service.LABEL) + r'"\s*=>\s*(enabled|disabled)', disabled
-            )
-            if match:
-                enabled = match.group(1) == "enabled"
-        except (OSError, RuntimeError, subprocess.SubprocessError):
-            pass
-        try:
-            output = service.status()
-            match = re.search(r"\bstate\s*=\s*(running|waiting|exited)\b", output)
-            if match:
-                running = match.group(1) == "running"
-        except (OSError, RuntimeError, subprocess.SubprocessError):
-            pass
+        platform, installed, enabled, running = service.login_state()
         return ServiceState(
-            supported=True, platform="macos", installed=installed, enabled=enabled, running=running
+            supported=platform != "unsupported",
+            platform=platform,
+            installed=installed,
+            enabled=enabled,
+            running=running,
         )
 
     @router.get("/service", response_model=ServiceState)
@@ -290,19 +368,15 @@ def create_router() -> APIRouter:
     @router.put("/service", response_model=ServiceState)
     async def set_service(spec: ServiceUpdate, request: Request):
         authorize(request, control=True)
-        if sys.platform != "darwin":
+        if service.platform_name() == "unsupported":
             raise HTTPException(501, "login service is unavailable on this platform")
         async with service_lock:
             try:
-                if spec.enabled:
-                    await asyncio.to_thread(
-                        service.install,
-                        request.app.state.ledger.settings.data_dir,
-                        settings=request.app.state.ledger.settings,
-                    )
-                domain = f"gui/{os.getuid()}/{service.LABEL}"
                 await asyncio.to_thread(
-                    service._launchctl, "enable" if spec.enabled else "disable", domain
+                    service.set_login_enabled,
+                    spec.enabled,
+                    request.app.state.ledger.settings.data_dir,
+                    settings=request.app.state.ledger.settings,
                 )
                 return await asyncio.to_thread(service_state)
             except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
@@ -318,7 +392,11 @@ def create_router() -> APIRouter:
             while not await request.is_disconnected():
                 current = await snapshot(request)
                 comparison = current.model_dump(
-                    exclude={"observed_at": True, "idle": {"observed_at"}}
+                    exclude={
+                        "observed_at": True,
+                        "idle": {"observed_at"},
+                        "peer_details": {"__all__": {"diagnostics_observed_at", "observed_at"}},
+                    }
                 )
                 kind = "snapshot" if previous is None else "heartbeat"
                 if previous is not None:
@@ -330,6 +408,9 @@ def create_router() -> APIRouter:
                         ("slots", "capacity"),
                         ("idle", "idle"),
                         ("peers", "peer"),
+                        ("peer_details", "peer"),
+                        ("job_history", "job"),
+                        ("waiters", "capacity"),
                     ):
                         if comparison[field] != previous[field]:
                             kind = event_type

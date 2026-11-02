@@ -50,3 +50,16 @@ no correctness authority. No automatic voter rebootstrap is allowed. See
 The daemon owns policy and execution; a future SwiftUI menu bar app and CLI are authenticated clients of its local API, not its lifetime or scheduling authority. Native macOS, Linux and Windows development precedes Docker/Compose, which is reserved for Phase 10. Existing port assignments remain unchanged: Ollama 11434, router 11435, image 11436, STT 11437, vision embedding 11438, text embedding 11439 and MLX 11440+. Future peer interfaces must not silently reassign or collide with them.
 
 Acceptance scenarios in the ADRs and [declarative test specification](../../tests/contracts/idle_herd.feature) are **future test requirements**, not evidence of current behavior. Native multi-process tests should use mock backends and injected partitions; real hardware claims require separate evidence. See the implementation plan for the full phase and failure matrix, and [ADR 005](adr-005-daemon-ui-and-native-sequence.md) for daemon/UI separation.
+
+## Phase 9 observation and native operation boundary
+
+The [local dashboard/doctor](phase-9.md) and menu bar consume the same authenticated
+versioned owner snapshots/events. Rich status includes waiter/lease correlation and
+redacted origin history; neither surface grants resources. An optional signed
+peer-status RPC feeds an independent bounded expiring observation cache. Old peers
+may omit this RPC. Local status and inference never synchronously depend on it or
+admin consensus. Quiet hours and per-origin contribution quotas execute inside the
+worker's serialized admission/consumption checks, preserving existing fenced lease
+recovery. Per-user launchd/systemd/Task Scheduler configuration is independent of
+UI lifetime. See [policy](phase-9-policy.md), [services](phase-9-services.md) and
+[exact native/mock verification](implementation-status.md). Docker stays Phase 10.

@@ -42,16 +42,18 @@ The running loopback daemon exposes `GET /v1/node/service` to read-scoped client
 and `PUT /v1/node/service` with `{"enabled": true}` or `{"enabled": false}` to
 control-scoped clients. Responses contain `version`, `supported`, `platform`,
 `installed`, `enabled`, and `running`; the last three may be `null` when unknown.
-On macOS this configures launch at the next login without unloading or restarting
-the current daemon; other platforms return 501 for a change. The installer uses
+On macOS, Linux and Windows this configures login startup without stopping
+the current daemon. Unsupported platforms return 501 for a change. Manager errors
+or unrecognized/localized state remain unknown, not guessed. The installer uses
 the daemon's Python interpreter and copies its effective `IDLE_HERD_` settings into
 the owner-protected launch agent, including the data directory and peer settings.
 
 ### Read-only dashboard
 
-`GET /dashboard` serves a minimal local status page. Enter the local read token to
+`GET /dashboard` serves the Phase 9 local dashboard. Enter the local read token to
 fetch the redacted status snapshot; the page keeps the token only in browser memory.
-The page offers no management actions. A fuller dashboard is planned for Phase 9.
+The page offers no management actions. Versioned events, independent polling, model capacity and diagnostic views share
+the menu bar semantics; see [Phase 9](phase-9.md).
 Same-origin browser reads require the bearer token; browser control writes and
 cross-origin requests remain rejected.
 
@@ -71,3 +73,36 @@ quorum loss return 503 only for these administrative operations. Read responses
 mark `consistent: false` for potentially stale local committed data. The peer RPC
 listener has no admin route. [Phase 8](phase-8.md) defines the separate Go API,
 bootstrap and dedicated voter credentials; the draft OpenAPI remains a subset.
+
+## Phase 9 diagnostic/status additions
+
+`GET /v1/node/peers` uses the local read scope and returns a list of local/remote
+observations. `/v1/node/status` adds `worker_incarnation`, `platform`, `waiters`,
+`peer_details`, `worker_leases`, latest-50 `job_history`, `notifications_enabled` and
+`hide_job_counts`. Existing fields retain their shapes. `idle` describes peer
+background eligibility; local inference retains its own configured policy.
+Peer counts/slots are observations, not grants; inaccessible/older peers show null
+diagnostics. Job history adds effective durability, acknowledged copy count,
+attempt count and duplicate consent. Worker leases add lease ID, hashed request
+correlation and incarnation/generation; reservation bearer tokens are excluded.
+
+`GET /v1/node/diagnostics?model=NAME` accepts an optional 1–512 character model name
+and returns the existing fields plus platform/worker observation and structured
+`checks` (`code`, `title`, `state`, `detail`, `remedy`) and optional live local
+`model_fit`. States are `ok`, `attention` or `unknown`. It never grants a slot or
+probes a remote worker; the existing cluster capacity endpoint remains advisory.
+
+Optional signed `POST /peer/v1/status` accepts only `{}` from an enrolled peer,
+rejects offline participation, and returns bounded aggregate platform/backend/model,
+sensor/activity/eligibility and slot/job/waiter counts bound to worker/incarnation.
+It exposes no owner control or private job records. An independent semaphore-bounded
+background poller verifies signatures/identity/incarnation/age and expires cached
+results. A 404 from older peers leaves diagnostics unknown without altering
+discovery/admission. The discovery descriptor schema is unchanged.
+
+New owner preferences: `quiet_hours_enabled`, start/end minute-of-day (0–1439),
+`peer_max_concurrent` (0–128 per authenticated origin), `notifications_enabled` and
+`hide_job_counts`. They use existing control scope and expected-version persistence.
+See [policy semantics](phase-9-policy.md), including local-time and quota limits.
+The standalone draft OpenAPI file remains a subset; runtime `/openapi.json` describes
+implemented loopback routes, while the signed peer envelope is documented here.
