@@ -125,18 +125,51 @@ public struct NodeClient {
         let (_, response) = try await session.data(for: request("v1/node/service", method: "PUT", body: body), delegate: Self.noRedirect)
         try check(response)
     }
-    public func events(onEvent: @escaping () async -> Void) async throws {
+    public func inventory() async throws -> [ModelInventoryItem] {
+        let (data, response) = try await session.data(for: request("v1/models/inventory"), delegate: Self.noRedirect)
+        try check(response)
+        return try JSONDecoder().decode(ModelInventoryResponse.self, from: data).models
+    }
+    public func transfers() async throws -> [ModelTransfer] {
+        let (data, response) = try await session.data(for: request("v1/models/transfers"), delegate: Self.noRedirect)
+        try check(response)
+        return try JSONDecoder().decode(ModelTransferResponse.self, from: data).transfers
+    }
+    public func startTransfer(digest: String, manifestDigest: String, sourceWorkerID: String, licenseAccepted: Bool, retry: Bool = false) async throws {
+        guard Self.validDigest(digest), Self.validDigest(manifestDigest), !sourceWorkerID.isEmpty, licenseAccepted else { throw ClientError.invalidResponse }
+        let body = try JSONSerialization.data(withJSONObject: ["digest": digest, "manifest_digest": manifestDigest, "source_worker_id": sourceWorkerID, "permission": true, "license_accepted": true])
+        let (_, response) = try await session.data(for: request(retry ? "v1/models/transfers/\(digest)/retry" : "v1/models/transfers", method: "POST", body: body), delegate: Self.noRedirect)
+        try check(response)
+    }
+    public func transferAction(digest: String, action: String) async throws {
+        guard Self.validDigest(digest), action == "pause" else { throw ClientError.invalidResponse }
+        let (_, response) = try await session.data(for: request("v1/models/transfers/\(digest)/\(action)", method: "POST"), delegate: Self.noRedirect)
+        try check(response)
+    }
+    private static func validDigest(_ digest: String) -> Bool {
+        return digest.utf8.count == 64 && digest.unicodeScalars.allSatisfy { CharacterSet(charactersIn: "0123456789abcdef").contains($0) }
+    }
+    public func events(onEvent: @escaping ([String: Any]) async -> Void) async throws {
         var req = try request("v1/node/events")
         req.timeoutInterval = 60
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         let (bytes, response) = try await session.bytes(for: req, delegate: Self.noRedirect)
         try check(response)
-        var hasData = false
+        var dataLines: [String] = []
         for try await line in bytes.lines {
             if Task.isCancelled { return }
-            if line.hasPrefix("data:") { hasData = true }
-            if line.isEmpty && hasData { hasData = false; await onEvent() }
+            if line.hasPrefix("data:") { dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)) }
+            if line.isEmpty && !dataLines.isEmpty {
+                let data = Data(dataLines.joined(separator: "\n").utf8); dataLines = []
+                if let snapshot = try? Self.eventSnapshot(data) { await onEvent(snapshot) }
+            }
         }
+    }
+    public static func eventSnapshot(_ data: Data) throws -> [String: Any] {
+        guard let event = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let snapshot = event["data"] as? [String: Any] else { throw ClientError.invalidResponse }
+        _ = try NodeSnapshot.decode(snapshot)
+        return snapshot
     }
     private func check(_ response: URLResponse) throws {
         guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
@@ -153,6 +186,8 @@ public struct NodeSnapshot: Decodable {
     public let mode: Mode
     public let slots: Slots
     public let idle: Idle
+    public let transfers: [ModelTransfer]?
+    public let model_inventory: [ModelInventoryItem]?
     public static func decode(_ object: [String: Any]) throws -> NodeSnapshot {
         let data = try JSONSerialization.data(withJSONObject: object)
         let snapshot = try JSONDecoder().decode(NodeSnapshot.self, from: data)
@@ -161,4 +196,32 @@ public struct NodeSnapshot: Decodable {
               snapshot.slots.occupied >= snapshot.slots.running else { throw ClientError.invalidResponse }
         return snapshot
     }
+}
+
+public struct ModelInventoryResponse: Decodable { public let models: [ModelInventoryItem] }
+public struct ModelInventoryItem: Decodable, Identifiable {
+    public var id: String { "\(source_worker_id ?? "local"):\(digest)" }
+    public let digest: String
+    public let model_id: String
+    public let manifest_digest: String?
+    public let license: String?
+    public let provenance: String?
+    public let size_bytes: Int64?
+    public let total_bytes: Int64?
+    public let format: String?
+    public let source_worker_id: String?
+    public let local: Bool?
+}
+public struct ModelTransferResponse: Decodable { public let transfers: [ModelTransfer] }
+public struct ModelTransfer: Decodable, Identifiable {
+    public var id: String { transfer_id ?? digest }
+    public let transfer_id: String?
+    public let manifest_digest: String?
+    public let source_worker_id: String?
+    public let digest: String
+    public let model_id: String?
+    public let state: String
+    public let completed_bytes: Int64
+    public let total_bytes: Int64
+    public let reason: String?
 }

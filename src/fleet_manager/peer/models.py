@@ -57,6 +57,9 @@ class PeerSettings(BaseSettings):
     peer_interval: float = Field(default=5, ge=0.1, le=300)
     peer_ttl: float = Field(default=30, ge=0.2, le=600)
     max_waiters: int = Field(default=256, ge=1, le=10000)
+    model_transfer_bytes_per_second: int = Field(default=10 * 1024 * 1024, ge=1, le=1024**3)
+    max_model_cache_bytes: int = Field(default=20 * 1024**3, ge=1)
+    model_reserved_disk_bytes: int = Field(default=1024**3, ge=0)
 
     @field_validator("peer_endpoint")
     @classmethod

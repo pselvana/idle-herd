@@ -17,6 +17,18 @@ final class MockProtocol: URLProtocol {
 }
 
 final class ClientTests: XCTestCase {
+    func body(_ request: URLRequest) throws -> Data {
+        if let data = request.httpBody { return data }
+        let stream = try XCTUnwrap(request.httpBodyStream)
+        stream.open(); defer { stream.close() }
+        var buffer = [UInt8](repeating: 0, count: 4096); var data = Data()
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+        return data
+    }
     func client() -> NodeClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockProtocol.self]
@@ -26,7 +38,7 @@ final class ClientTests: XCTestCase {
         MockProtocol.handler = { request in
             XCTAssertEqual(request.httpMethod, "PUT")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
-            let body = try XCTUnwrap(request.httpBody)
+            let body = try self.body(request)
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             XCTAssertEqual(json["mode"] as? String, "offline")
             XCTAssertEqual(json["duration_seconds"] as? Int, 3600)
@@ -48,4 +60,36 @@ final class ClientTests: XCTestCase {
         let remote = NodeClient(baseURL: URL(string: "http://example.com")!, token: { "secret" })
         XCTAssertThrowsError(try remote.request("v1/node/status"))
     }
+    func testTransferConsentAndAuthenticatedActions() async throws {
+        let digest = String(repeating: "a", count: 64)
+        var requests: [URLRequest] = []
+        MockProtocol.handler = { request in requests.append(request); return (200, Data("{}".utf8)) }
+        do { try await client().startTransfer(digest: digest, manifestDigest: digest, sourceWorkerID: "peer", licenseAccepted: false); XCTFail("consent required") } catch {}
+        do { try await client().transferAction(digest: "../bad", action: "retry"); XCTFail("invalid digest") } catch {}
+        XCTAssertTrue(requests.isEmpty)
+        try await client().startTransfer(digest: digest, manifestDigest: digest, sourceWorkerID: "peer", licenseAccepted: true)
+        try await client().transferAction(digest: digest, action: "pause")
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests[0].value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+        let body = try body(requests[0])
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["permission"] as? Bool, true)
+        XCTAssertEqual(json["license_accepted"] as? Bool, true)
+        XCTAssertEqual(json["source_worker_id"] as? String, "peer")
+        XCTAssertEqual(json["manifest_digest"] as? String, digest)
+        XCTAssertEqual(requests[1].url?.path, "/v1/models/transfers/\(digest)/pause")
+    }
+    func testSharingSnapshotsDecode() async throws {
+        MockProtocol.handler = { request in
+            if request.url!.path.hasSuffix("inventory") {
+                return (200, Data("{\"models\":[{\"digest\":\"abc\",\"model_id\":\"m\",\"total_bytes\":100}]}".utf8))
+            }
+            return (200, Data("{\"transfers\":[{\"digest\":\"abc\",\"model_id\":\"m\",\"state\":\"failed\",\"completed_bytes\":20,\"total_bytes\":100,\"reason\":\"disk full\"}]}".utf8))
+        }
+        let inventory = try await client().inventory()
+        let transfers = try await client().transfers()
+        XCTAssertEqual(inventory.first?.total_bytes, 100)
+        XCTAssertEqual(transfers.first?.reason, "disk full")
+    }
+
 }

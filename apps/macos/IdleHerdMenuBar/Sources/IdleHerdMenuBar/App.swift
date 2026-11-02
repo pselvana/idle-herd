@@ -8,6 +8,9 @@ import IdleHerdCore
     @Published var snapshot: NodeSnapshot?
     @Published var jobs: [[String: Any]] = []
     @Published var originJobs: [[String: Any]] = []
+    @Published var inventory: [ModelInventoryItem] = []
+    @Published var transfers: [ModelTransfer] = []
+    @Published var sharingError: String?
     @Published var connected = false
     @Published var lastUpdate: Date?
     @Published var error: String?
@@ -32,7 +35,7 @@ import IdleHerdCore
         stream = Task {
             while !Task.isCancelled {
                 await refresh()
-                do { try await client.events { [weak self] in await self?.refresh() } }
+                do { try await client.events { [weak self] snapshot in try? self?.apply(snapshot) } }
                 catch { self.error = "Live events unavailable; polling status." }
                 if !Task.isCancelled { try? await Task.sleep(nanoseconds: 3_000_000_000) }
             }
@@ -58,13 +61,44 @@ import IdleHerdCore
         do {
             let snapshot = try await client.fetch("v1/node/status")
             let jobSnapshot = try? await client.fetch("v1/node/jobs")
-            let validated = try NodeSnapshot.decode(snapshot)
-            self.snapshot = validated
-            status = snapshot
+            try apply(snapshot)
             jobs = (jobSnapshot?["worker_leases"] as? [[String: Any]]) ?? []
             originJobs = (jobSnapshot?["jobs"] as? [[String: Any]]) ?? []
+            do {
+                let inventory = try await client.inventory()
+                self.inventory = inventory
+                if self.snapshot?.transfers == nil { self.transfers = try await client.transfers() }
+                sharingError = nil
+            } catch { inventory = self.snapshot?.model_inventory ?? []; sharingError = "Model sharing status unavailable: \(error.localizedDescription)" }
             connected = true; lastUpdate = Date(); error = nil
         } catch { connected = false; self.error = error.localizedDescription }
+    }
+    func apply(_ object: [String: Any]) throws {
+        let validated = try NodeSnapshot.decode(object)
+        snapshot = validated; status = object
+        if let values = validated.transfers { transfers = values }
+        if let local = validated.model_inventory {
+            let remote = inventory.filter { $0.local == false }
+            let knownLocal = inventory.filter { $0.local == true }
+            inventory = local.map { item in knownLocal.first { $0.digest == item.digest } ?? item } + remote
+        }
+        connected = true; lastUpdate = Date(); error = nil
+    }
+    func transferAction(_ transfer: ModelTransfer, action: String) {
+        actionError = nil; busy = true
+        Task {
+            do { try await client.transferAction(digest: transfer.digest, action: action); await refresh() }
+            catch { actionError = error.localizedDescription }
+            busy = false
+        }
+    }
+    func startTransfer(digest: String, manifestDigest: String, source: String, licenseAccepted: Bool, retry: Bool) {
+        actionError = nil; busy = true
+        Task {
+            do { try await client.startTransfer(digest: digest, manifestDigest: manifestDigest, sourceWorkerID: source, licenseAccepted: licenseAccepted, retry: retry); await refresh() }
+            catch { actionError = error.localizedDescription }
+            busy = false
+        }
     }
     func cancelJob(_ id: String) {
         actionError = nil
@@ -142,6 +176,8 @@ struct ContentView: View {
     @State private var cancelJobID: String?
     @State private var showingPreferences = false
     @State private var showingDiagnostics = false
+    @State private var showingTransfer = false
+    @State private var retryTransfer: ModelTransfer?
     @State private var diagnostics = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -177,7 +213,34 @@ struct ContentView: View {
             Text("Resource sample: \(model.telemetryAge) · \(model.value("resources", "source"))").font(.caption)
             Text("CLUSTER (reachable estimate)").font(.caption.bold())
             Text("Known: \(model.value("peers", "known")) · Reachable: \(model.value("peers", "reachable")) · Stale: \(model.value("peers", "stale"))")
-            Text("Remote slots indicated: \(model.value("peers", "observed_available_slots")) · Transfers: \(model.value("transfers"))")
+            Text("Remote slots indicated: \(model.value("peers", "observed_available_slots"))")
+            Text("MODEL INVENTORY & TRANSFERS").font(.caption.bold())
+            if let error = model.sharingError { Text(error).font(.caption).foregroundStyle(.orange) }
+            if model.inventory.isEmpty && model.sharingError == nil { Text("No models in inventory").font(.caption) }
+            ScrollView { VStack(alignment: .leading) {
+            ForEach(model.inventory) { item in
+                Text("\(item.model_id) · \(item.format ?? "unknown format") · \((item.total_bytes ?? item.size_bytes).map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "size unknown")").lineLimit(1)
+            }
+            ForEach(model.transfers) { transfer in
+                VStack(alignment: .leading) {
+                    HStack {
+                        Text("\(transfer.model_id ?? "unknown model") · \(transfer.state)").lineLimit(1)
+                        Spacer()
+                        if ["queued", "transferring", "downloading"].contains(transfer.state) {
+                            Button("Pause") { model.transferAction(transfer, action: "pause") }.disabled(!model.connected || model.busy)
+                        } else if ["paused", "failed", "waiting", "rejected"].contains(transfer.state) {
+                            Button("Retry…") { retryTransfer = transfer }.disabled(!model.connected || model.busy)
+                        }
+                    }
+                    if transfer.total_bytes > 0 {
+                        ProgressView(value: Double(max(0, transfer.completed_bytes)), total: Double(transfer.total_bytes))
+                        Text("\(ByteCountFormatter.string(fromByteCount: transfer.completed_bytes, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: transfer.total_bytes, countStyle: .file))").font(.caption)
+                    }
+                    if let reason = transfer.reason, !reason.isEmpty { Text(reason).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+                }
+            }
+            } }.frame(maxHeight: 180)
+            Button("Copy model from peer…") { showingTransfer = true }.disabled(!model.connected || model.busy)
             Divider()
             HStack {
                 Button("Automatic") { model.changeMode("auto") }
@@ -211,6 +274,8 @@ struct ContentView: View {
                 Button("Cancel job", role: .destructive) { if let id = cancelJobID { model.cancelJob(id) }; cancelJobID = nil }
                 Button("Keep job", role: .cancel) { cancelJobID = nil }
             } message: { Text("Cancellation is best effort. The outcome may remain unknown.") }
+            .sheet(isPresented: $showingTransfer) { TransferView(model: model) }
+            .sheet(item: $retryTransfer) { transfer in TransferView(model: model, retryTransfer: transfer) }
             .sheet(isPresented: $showingPreferences) { PreferencesView(model: model) }
             .sheet(isPresented: $showingDiagnostics) {
                 VStack(alignment: .leading) { Text("Diagnostics").font(.headline); ScrollView { Text(diagnostics).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }; Button("Close") { showingDiagnostics = false } }.padding().frame(width: 480, height: 300)
@@ -301,5 +366,49 @@ struct PreferencesView: View {
     func setService(_ enabled: Bool) async {
         do { try await model.client.setService(enabled: enabled); await loadPolicy(); message = "Daemon login setting updated." }
         catch { message = error.localizedDescription }
+    }
+}
+
+struct TransferView: View {
+    @ObservedObject var model: NodeModel
+    @Environment(\.dismiss) var dismiss
+    @State private var digest = ""
+    @State private var manifestDigest = ""
+    @State private var source = ""
+    @State private var permission = false
+    @State private var license = false
+    private let retry: Bool
+    init(model: NodeModel, retryTransfer: ModelTransfer? = nil) {
+        self.model = model; self.retry = retryTransfer != nil
+        _digest = State(initialValue: retryTransfer?.digest ?? "")
+        _manifestDigest = State(initialValue: retryTransfer?.manifest_digest ?? "")
+        _source = State(initialValue: retryTransfer?.source_worker_id ?? "")
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(retry ? "Retry model copy" : "Copy model from peer").font(.headline)
+            Text("Choose an advertised model or enter details from a trusted peer. Review the license and provenance before copying.")
+            if !retry { ScrollView { VStack(alignment: .leading) {
+            ForEach(model.inventory) { item in
+                Button("\(item.model_id) · \(item.source_worker_id ?? "source unknown")") {
+                    digest = item.digest; manifestDigest = item.manifest_digest ?? ""; source = item.source_worker_id ?? ""
+                    permission = false; license = false
+                }
+                Text("License: \(item.license ?? "unknown") · Provenance: \(item.provenance ?? "unknown")").font(.caption).textSelection(.enabled)
+            }
+            } }.frame(maxHeight: 150) }
+            TextField("SHA-256 digest", text: $digest).disabled(retry)
+            TextField("Manifest SHA-256 digest", text: $manifestDigest).disabled(retry)
+            TextField("Source worker ID", text: $source)
+            Toggle("I authorize this copy from the selected peer", isOn: $permission)
+            Toggle("I have reviewed and accept the model's license", isOn: $license)
+            HStack {
+                Button("Cancel") { dismiss() }
+                Button(retry ? "Retry copy" : "Start copy") {
+                    model.startTransfer(digest: digest.trimmingCharacters(in: .whitespacesAndNewlines), manifestDigest: manifestDigest.trimmingCharacters(in: .whitespacesAndNewlines), source: source.trimmingCharacters(in: .whitespacesAndNewlines), licenseAccepted: license, retry: retry)
+                    dismiss()
+                }.disabled(!permission || !license || digest.isEmpty || manifestDigest.isEmpty || source.isEmpty || model.busy || !model.connected)
+            }
+        }.padding().frame(width: 440)
     }
 }

@@ -1,6 +1,6 @@
 # Native development, build and test paths
 
-Phases 1–6 retain Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
+Phases 1–7 retain Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
 and commands `herd` / `herd-node`, and adds `idle-herd` single-node ingress.
 Run `uv run idle-herd` with separately managed local Ollama on port 11434;
 ingress binds 127.0.0.1:11435. See [runtime/configuration/recovery](phase-1.md).
@@ -133,3 +133,14 @@ unrelated machine. Native service installation and companion builds arrive in
 later phases; the UI never supervises daemon execution. Existing ports remain
 unchanged. Peer listeners use explicitly allocated unused private HTTPS endpoints;
 there is no default new peer port.
+
+## Phase 7 model-sharing verification
+
+The focused suite is `uv run pytest tests/test_peer/test_model_sharing.py
+tests/test_peer/test_model_transport.py tests/test_peer/test_model_sharing_native.py
+tests/test_local_control/test_model_controls.py -q`. The native case starts real
+loopback HTTP/TLS processes with fabricated GGUF/Ollama, so it requires local socket
+access. It exercises permission denial, interrupted source, persistent partial,
+restart/resume and local survivor inference. Swift `ClientSmoke` verifies progress
+event decoding and consent-bearing retry; full XCTest requires Xcode. These tests
+do not establish real-model/MLX or Windows hardware acceptance. See [Phase 7](phase-7.md).

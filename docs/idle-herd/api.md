@@ -1,4 +1,4 @@
-# Idle-Herd API contract — roadmap and Phases 1–6 subset
+# Idle-Herd API contract — roadmap and Phases 1–7 subset
 
 [openapi.yaml](openapi.yaml) remains the OpenAPI 3.1 future cluster/control
 contract. The running `/openapi.json` describes the implemented subset. See
@@ -9,6 +9,9 @@ inspection, release and their actual fields and limitations. [Phase 5](phase-5.m
 defines durable jobs and [Phase 6](phase-6.md) defines the implemented local
 control scopes, modes, preferences, events and companion. Other draft fields
 below are not necessarily implemented.
+[Phase 7](phase-7.md) defines the implemented model inventory, permission, transfer
+and progress endpoints, source-peer and local-owner authorization, and
+single-file GGUF/Ollama limitations.
 Existing inference translators are reused; legacy `herd` retains upstream routes.
 
 ## Trust and visibility
@@ -23,7 +26,7 @@ All draft operations require authorization by default. Capacity access, local te
 
 The origin stores idempotency keys and worker claims are independently idempotent. A retry with the same key and same request at the same origin returns the prior result or continues its pending operation without booking another slot; reuse with different parameters is `409 idempotency_conflict`. Key retention and behavior after retention expires must be specified before implementation. This is not cluster-global deduplication. A timeout or lost response is not proof that a worker did nothing; inspect or retry with the same key. Reservation inspection and release contact the issuing worker; `503 worker_unreachable` means state or release is unknown, not active or released. Invalid and expired tokens use `409 reservation_invalid` and `410 reservation_expired`. Nonblocking contention returns `429 no_capacity` with `Retry-After`; no reachable worker returns `503 no_reachable_worker`, inconclusive eligibility `503 no_eligible_worker`, conclusively incompatible model `422 model_not_compatible`, and an elapsed wait `504 capacity_wait_timeout` with available diagnostic counters. Ordinary failures use the versioned error envelope in the schema.
 
-Worker-local slot safety does not imply globally exactly-once jobs. Partitions or uncertain outcomes can produce duplicate logical attempts on different workers. Future durable job recovery must identify attempts, report `unknown_outcome` where appropriate, and provide at-least-once semantics for eligible retries; never automatically fail over side-effecting or non-idempotent work. Local persistence only survives while its storage does; replicated durability requires acknowledged durable copies of both metadata and payload and must not be silently downgraded. Phase 5 implements durable job endpoints; see [the actual job contract](phase-5.md). Model sharing remains a future design.
+Worker-local slot safety does not imply globally exactly-once jobs. Partitions or uncertain outcomes can produce duplicate logical attempts on different workers. Future durable job recovery must identify attempts, report `unknown_outcome` where appropriate, and provide at-least-once semantics for eligible retries; never automatically fail over side-effecting or non-idempotent work. Local persistence only survives while its storage does; replicated durability requires acknowledged durable copies of both metadata and payload and must not be silently downgraded. Phase 5 implements durable job endpoints; see [the actual job contract](phase-5.md). Model sharing uses the [Phase 7 subset](phase-7.md).
 
 ## Local control and events
 

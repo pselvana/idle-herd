@@ -1,6 +1,6 @@
 # AGENTS.md — Ollama Herd
 
-## Idle-Herd fork instructions (Phase 6)
+## Idle-Herd fork instructions (Phase 7)
 
 This checkout is the Idle-Herd fork. The upstream guidance below is retained;
 these fork rules govern the architecture where it differs. `idle-herd` now runs
@@ -10,6 +10,8 @@ discovery/direct dispatch, worker-local idle policy and no Raft. See
 [Phase 4](docs/idle-herd/phase-4.md), and
 [Phase 5 durable jobs](docs/idle-herd/phase-5.md), and
 [Phase 6 owner controls/menu bar](docs/idle-herd/phase-6.md).
+See [Phase 7 authorized GGUF sharing](docs/idle-herd/phase-7.md) for the implemented
+single-file Ollama adapter, explicit permission, resumable transfers and limits.
 Legacy `herd` / `herd-node` retain upstream behavior. Start at
 [implementation status](docs/idle-herd/implementation-status.md)
 and the canonical [implementation plan](IDLE-HERD_IMPLEMENTATION_PLAN.md).

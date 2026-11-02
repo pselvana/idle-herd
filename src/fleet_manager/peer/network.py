@@ -166,6 +166,9 @@ class PeerRPC:
                 "/peer/v1/capacity",
                 "/peer/v1/jobs/store",
                 "/peer/v1/jobs/fetch",
+                "/peer/v1/models/inventory",
+                "/peer/v1/models/manifest",
+                "/peer/v1/models/chunk",
             }
             or scope.get("query_string")
         ):
@@ -193,7 +196,30 @@ class PeerRPC:
             # Existing streams finish, and their owners can inspect/release.
             # No exchange, replica admission, capacity, or new execution offline.
             raise AdmissionError("manual_offline", 503)
-        if path in {"/peer/v1/jobs/store", "/peer/v1/jobs/fetch"}:
+        if path.startswith("/peer/v1/models/"):
+            from fleet_manager.peer.model_sharing import ChunkRequest
+            from fleet_manager.peer.model_transport import (
+                MAX_INVENTORY,
+                InventoryRequest,
+                ManifestRequest,
+                ModelInventory,
+            )
+
+            if (await self.local.state.ledger.mode_state()).mode in {"offline", "paused"}:
+                raise AdmissionError("manual_offline", 503)
+            sharing = self.local.state.model_sharing
+            if path.endswith("inventory"):
+                InventoryRequest.model_validate_json(body)
+                models = (await sharing.inventory(principal))[:MAX_INVENTORY]
+                result = ModelInventory(models=models)
+            elif path.endswith("manifest"):
+                request = ManifestRequest.model_validate_json(body)
+                result = await sharing.source_manifest(principal, request.digest)
+            else:
+                result = await sharing.source_chunk(
+                    principal, ChunkRequest.model_validate_json(body)
+                )
+        elif path in {"/peer/v1/jobs/store", "/peer/v1/jobs/fetch"}:
             from fleet_manager.peer.replication import FetchRequest, StoreRequest
 
             replication = getattr(self.local.state, "job_replication", None)

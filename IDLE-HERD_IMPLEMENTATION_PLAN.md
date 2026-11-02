@@ -869,11 +869,16 @@ restart persistence. This is not physical Quit UI or real-model acceptance.
 
 ### Phase 7 — Peer-to-peer model replication and provisioning
 
-- [ ] Build digest-based inventories, compatibility rules (GGUF/Ollama, Apple Silicon MLX, backends/quantization), share permission checks and destination disk/RAM budget.
-- [ ] Implement destination-owned installation locks, authenticated resumable chunk transfer, checksum validation, staging, atomic import and optional registry fallback.
-- [ ] Do not require the leader for transfers, and avoid cluster-global locks. Prevent duplicate destination downloads locally, with useful retry behavior after source node disappears.
-- [ ] Implement managed cache limits, privacy/license controls, source preference, and eventual reconciliation on peer return.
-- [ ] Publish transfer status and model inventory to local node events for the menu bar, including pause/retry and disk-rejection reasons.
+- [x] Build standalone GGUF/Ollama digest inventories, declared OS/CPU/backend-version checks, share permissions and destination disk/RAM budgets. Reject unsupported MLX/CUDA/OCI; full operator/quantization compatibility and real MLX import remain open.
+- [x] Implement destination-owned persistent claims/OS locks, authenticated resumable chunks, checksum validation, private staging and verified cache publication after admitted Ollama import/load confirmation. Optional registry fallback is not implemented.
+- [x] Do not require a leader or global lock. Prevent duplicate destination downloads locally; resume exact-manifest content from an authorized source after source loss.
+- [x] Implement managed cache limits, privacy/license controls, preferred-source selection and live inventory reconciliation on peer return. No automatic eviction of manual/pinned models.
+- [x] Publish transfer status and model inventory through local node events and menu bar progress/consent/pause/retry, including disk-rejection reasons.
+
+Implementation and evidence: [Phase 7 operation and limits](docs/idle-herd/phase-7.md)
+and [status](docs/idle-herd/implementation-status.md). Native mock-process copying,
+interruption/resume and survivor inference are tested. Real GGUF/MLX load acceptance,
+complete backend compatibility certification and physical GUI acceptance remain open.
 
 **Acceptance:** A compatible peer copies a permitted model from a currently reachable source and successfully loads it, even with no coordinator. If source disappears mid-transfer, partial content remains untrusted until verified. Incompatible MLX->Linux target is rejected; menu bar displays accurate transfer state.
 
@@ -1176,11 +1181,13 @@ limitations rather than treating roadmap guarantees as implemented behavior.
 - OpenAI Codex VS Code extension: https://marketplace.visualstudio.com/items?itemName=OpenAI.chatgpt
 - Codex IDE workflow: https://learn.chatgpt.com/docs/codex/ide
 
-**Revision:** November 1, 2026 (v10). Records Phase 0–6 implementation,
+**Revision:** November 1, 2026 (v11). Records Phase 0–7 implementation,
 including worker-local idle policy, native sensor interfaces, origin capacity waits
 and durable jobs with acknowledged peer copies. Hardware sensor
 and backend acceptance and documented recovery/fit limits remain explicit.
-Physical GUI/service acceptance and Phases 7–10 remain future work; optional Raft stays outside inference and
+Phase 7 implements standalone GGUF sharing with declared compatibility limits;
+real GGUF/MLX load and physical GUI/service acceptance remain open. Phases 8–10
+remain future work; optional Raft stays outside inference and
 Docker/Compose stays in Phase 10. Any upstream guidance suggesting an always-on
 router or mandatory Raft must be interpreted using current §§0–4, 8–9, 11–12.
 

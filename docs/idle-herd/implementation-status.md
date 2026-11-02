@@ -1,5 +1,91 @@
 # Idle-Herd implementation status
 
+## Phase 7 — authorized standalone GGUF sharing, November 1, 2026
+
+Implemented source allowlists and owner consent, authenticated digest-bound manifests
+and chunk RPC, resumable private staging, persistent destination claims/OS locks,
+budgets/throttles, public Ollama import with worker-admitted load confirmation, and
+menu bar inventory/progress/pause/retry. See [operation, actual API and limitations](phase-7.md).
+Earlier phase sections below are historical records. The next roadmap phase is
+**Phase 8**, optional administrative Raft; no Raft or Docker/Compose was introduced.
+
+- [x] Deny-by-default model sharing and separate source-peer/local-owner credentials;
+  explicit destination permission/license consent, per-chunk ACL checks and revocation.
+- [x] Immutable content/metadata digests, signed bounded chunks/replies, final hash,
+  GGUF magic and declared OS/CPU/minimum-backend-version checks before publication.
+- [x] Cross-process destination exclusion, unique per-digest journal claim, fsynced
+  partials, restart pause, same-manifest source failover and explicit resumable retry.
+- [x] Managed cache quota, disk-copy headroom/reserve, manifest RAM budget, source
+  reader/bandwidth limits and destination throttling; no automatic manual/pinned eviction.
+- [x] Worker-fenced load probes respect busy/paused admission; no execution TTL or
+  transfer failure releases running/quarantined worker slots. Backend digest changes
+  are reflected in status rather than retaining a false ready observation.
+- [x] Authenticated owner API/CLI, redacted sampled `transfer`/`model` events, Swift
+  progress and renewed consent on retry. UI lifetime remains independent of daemon.
+- [x] Two native daemon processes exercise TLS, permission denial, interrupted source,
+  durable partial, source restart/resume/import and local inference with the imported
+  model after the source exits again. Existing N=1/2/3 survivor/partition tests rerun.
+- [ ] Real GGUF/Ollama hardware and full operator/quantization/context compatibility;
+  MLX multi-file import/load, registry fallback and physical GUI/Windows lock acceptance.
+  MLX/CUDA-specific/OCI transfers are rejected; no unsupported acceptance is claimed.
+
+### Phase 7 commands and results
+
+Host: native macOS arm64, Python 3.14.2, existing core/dev environment. `uv` denotes
+`/private/tmp/idle-herd-phase0-tools/bin/uv` with
+`UV_CACHE_DIR=/private/tmp/idle-herd-phase0-uv-cache`. Native loopback test access
+was approved; no user service, real model backend, deployment or release was installed.
+
+| Command | Result |
+|---|---|
+| `uv run --offline pytest --tb=short -q > /private/tmp/idle-herd-phase7-final-pytest.log 2>&1` with native socket/OS access | Exit 0: **2260 passed, 3 skipped, 3 warnings in 97.01s**; final runtime includes transfer shutdown ordering and SQLite connection cleanup |
+| `.venv/bin/pytest tests/test_peer/test_model_sharing.py tests/test_peer/test_model_transport.py tests/test_local_control/test_model_controls.py -q --tb=short` | Exit 0: **19 passed in 1.55s**; after full-suite collection, expanded event-transition assertions and added one busy/paused admitted-load regression test |
+| `.venv/bin/pytest tests/test_peer/test_model_sharing_native.py -q --tb=short` with native access | Exit 0: **1 passed in 3.94s**; later strengthened to generate with the imported model as survivor, included in final full suite |
+| `uv run --offline ruff check src/`; `uv run --offline ruff format --check src/` | Exit 0; all checks passed, **112 files already formatted** |
+| Ruff check of all new Phase 7 tests; `git diff --check` | Exit 0 |
+| `CLANG_MODULE_CACHE_PATH=/private/tmp/idle-herd-clang-cache swift build --disable-sandbox --package-path apps/macos/IdleHerdMenuBar` | Exit 0; SwiftUI/Core/Smoke targets build |
+| Same environment, `swift run --disable-sandbox --package-path apps/macos/IdleHerdMenuBar ClientSmoke` | Exit 0; transfer-event decoding, retry consent, authenticated actions and prior client recovery checks pass |
+| Same environment, `swift test --disable-sandbox --package-path apps/macos/IdleHerdMenuBar` | Exit 1: **no such module 'XCTest'** in installed Command Line Tools; not a passing XCTest claim |
+| `create_peer_app().openapi()` assertions | Model-sharing, Anthropic Messages and OpenAI Responses routes present |
+| Branch and diff checks | Work stays directly on `main`; no worktrees, commits, publication or container changes |
+
+Restricted focused attempts failed native socket binds; repeating with native access
+passed without weakening assertions. One early combined collection found duplicate
+test module basenames; the local control test was renamed. Development assertions
+were corrected for Typer wrapping and the typed mode test interface. Full-suite
+results above supersede those development failures. Three optional ONNX skips and
+three inherited coroutine warnings remain, plus pytest-asyncio's fixture-loop
+deprecation. `uv --offline` controls dependency resolution, not test network access;
+inherited telemetry schema tests may contact their existing public schema endpoint.
+Swift emitted restricted cache warnings but built; XCTest remains unavailable.
+
+The model-sharing journal/cache is separate from worker leases and origin jobs.
+Backend import uses public APIs; a load probe passes through ordinary fenced local
+admission. No model transfer needs a coordinator or quorum. Source license/provenance
+is authenticated and content-bound, not independently publisher-certified. Optional
+platform declarations are constraints rather than universal GGUF compatibility proof.
+Ready cache publication is verified; backend metadata may expose verified imported
+weights before load confirmation completes. A crash in the backend-create/record gap
+requires conservative owner investigation, and external tools can race backend names.
+Quota/headroom checks exclude Ollama's separate storage and cannot reserve resources
+against external applications. Windows reparse-point fencing and physical GUI use
+remain unverified. Real MLX acceptance is an open Phase 7 limitation, not a passed test.
+
+### Phase 7 changed files
+
+New runtime: `peer/model_sharing.py`, `peer/model_transport.py`, and
+`local_control/model_sharing.py`. Modified runtime: `peer/{app,models,network}.py`,
+`local_control/{models,router}.py`, and `cli/peer_cli.py`. Swift changes:
+`Sources/{IdleHerdCore/Client,IdleHerdMenuBar/App,ClientSmoke/main}.swift` and
+`Tests/IdleHerdCoreTests/ClientTests.swift` under `apps/macos/IdleHerdMenuBar/`.
+New tests: `tests/test_peer/{model_sharing_runner,test_model_sharing,
+test_model_sharing_native,test_model_transport}.py` and
+`tests/test_local_control/test_model_controls.py`. Documentation: this status,
+`phase-7.md`, `api.md`, `architecture.md`, `security.md`, `development.md`,
+`ui-and-controls.md`, `adr-004-sensors-and-model-sharing.md`, menu app README,
+and root `AGENTS.md`, `CLAUDE.md`, `README.md`, `IDLE-HERD_IMPLEMENTATION_PLAN.md`.
+Upstream MIT attribution, legacy compatibility and port assignments are preserved.
+
 ## Phase 6 — owner controls and native menu bar, November 1, 2026
 
 Implemented the scoped local control API, persistent owner modes/preferences,

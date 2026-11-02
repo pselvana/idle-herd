@@ -173,14 +173,21 @@ class LocalBoundary:
             return await JSONResponse(
                 status_code=403, content={"error": {"type": "local_clients_only"}}
             )(scope, receive, send)
-        if scope["path"] == "/v1/jobs" and scope["method"] == "POST":
+        if (scope["path"] == "/v1/jobs" and scope["method"] == "POST") or (
+            scope["path"].startswith("/v1/models/") and scope["method"] in {"POST", "PUT"}
+        ):
             try:
                 body = await read_body(receive, 256 * 1024)
             except AdmissionError:
-                await trace_failure(self.local, "job_request_too_large")
-                return await JSONResponse(
-                    status_code=413, content={"error": {"type": "job_request_too_large"}}
-                )(scope, receive, send)
+                reason = (
+                    "job_request_too_large"
+                    if scope["path"] == "/v1/jobs"
+                    else "model_request_too_large"
+                )
+                await trace_failure(self.local, reason)
+                return await JSONResponse(status_code=413, content={"error": {"type": reason}})(
+                    scope, receive, send
+                )
             receive = body_receiver(body, receive)
         token = headers.get(b"x-idle-herd-reservation")
         workload = headers.get(b"x-idle-herd-workload", "interactive")
@@ -206,7 +213,9 @@ class LocalBoundary:
 
         try:
             await self.app(
-                scope, receive, private_send if scope["path"].startswith("/v1/node/") else send
+                scope,
+                receive,
+                private_send if scope["path"].startswith(("/v1/node/", "/v1/models/")) else send,
             )
         finally:
             binding.reset(marker)
@@ -346,6 +355,47 @@ def create_peer_app(
                     app.state.peer_error = str(exc)
                     logger.error("Peer transport unavailable: %s", exc)
 
+            from fleet_manager.peer.model_sharing import ModelSharing
+            from fleet_manager.peer.model_transport import ModelTransport
+
+            async def confirm_model_load(manifest):
+                # The local runtime owns all execution, including a load probe.
+                await refresh_local(app)
+                lease = await ledger.acquire(AcquireRequest(model=manifest.model_id, wait_ms=0))
+                try:
+                    async with httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:11435"
+                    ) as client:
+                        response = await client.post(
+                            "/api/generate",
+                            headers={"x-idle-herd-reservation": lease.token},
+                            json={
+                                "model": manifest.model_id,
+                                "prompt": "",
+                                "stream": False,
+                                "options": {"num_predict": 1},
+                            },
+                            timeout=120,
+                        )
+                    return response.status_code == 200 and response.json().get("done") is True
+                finally:
+                    await ledger.abandon_unconsumed(lease.token)
+
+            sharing = ModelSharing(
+                Path(data_dir) / "model-sharing",
+                settings.backend_url,
+                transport=backend_transport,
+                load_confirm=confirm_model_load,
+                bytes_per_second=settings.model_transfer_bytes_per_second,
+                max_bytes=settings.max_model_cache_bytes,
+                reserved_bytes=settings.model_reserved_disk_bytes,
+                reserve_memory_bytes=int(settings.reserve_memory_gb * 1e9),
+            )
+            await sharing.open()
+            stack.push_async_callback(sharing.close)
+            app.state.model_sharing = sharing
+            app.state.model_transport = ModelTransport(app)
+
             waiters = OriginWaiters(app)
             await waiters.open()
             stack.push_async_callback(waiters.close)
@@ -380,6 +430,9 @@ def create_peer_app(
             try:
                 yield
             finally:
+                # Transfer load probes use waiters, traces and the ledger. Stop them
+                # before the exit stack closes those independently owned services.
+                await sharing.close()
                 sensor_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await sensor_task
@@ -424,13 +477,18 @@ def create_peer_app(
     from fleet_manager.local_control.router import create_router
 
     app.include_router(create_router())
+    from fleet_manager.local_control.model_sharing import create_model_router
+
+    app.include_router(create_model_router())
     from fleet_manager.local_control.dashboard import router as dashboard_router
 
     app.include_router(dashboard_router)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request, exc):
-        if request.url.path == "/v1/jobs" or request.url.path.startswith("/v1/node/"):
+        if request.url.path == "/v1/jobs" or request.url.path.startswith(
+            ("/v1/node/", "/v1/models/")
+        ):
             # Validation inputs can contain entire prompts and tool arguments.
             reason = (
                 "invalid_job_request"

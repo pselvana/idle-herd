@@ -1,4 +1,4 @@
-# Security boundary: Phases 1–6 and target design
+# Security boundary: Phases 1–7 and target design
 
 The table below is the target threat model. Phase 1 `idle-herd` binds ingress to
 127.0.0.1, rejects non-loopback clients, unexpected Host and browser Origin/cross-site
@@ -6,7 +6,7 @@ requests, and validates worker-issued one-use reservation capabilities. Its stat
 directory is restricted to the current user (POSIX mode 0700; Windows requires
 appropriate per-user ACLs). Local inference and initial reservation issuance are
 available to local processes; Phase 6 separately authenticates privileged owner
-controls. It exposes no model-transfer endpoints. Phase 2 adds a
+controls. Model transfer is added separately in Phase 7. Phase 2 adds a
 separate TLS listener with signed, replay-fenced RPC, CA enrollment and eventual
 authority-signed revocation. Phase 4 adds capacity and inspect RPC to
 exchange/acquire/execute/release; all require independent peer authentication;
@@ -48,6 +48,13 @@ this is not protection from malicious same-user code. Windows ACL enforcement,
 physical Keychain prompts and native GUI lifecycle remain unverified. Rotation
 currently requires stopping the daemon, replacing its private credentials and
 reimporting the UI credential. See [Phase 6 security and limits](phase-6.md).
+Phase 7 source sharing is deny-by-default per destination and artifact. Signed
+chunks and manifests bind content/metadata; license/provenance claims are authenticated
+to a peer, not certified by the publisher. Protected staging, quotas, source/destination
+throttles and destination-local install locks constrain transfers. Owner consent,
+revocation checks per chunk, no-follow source opens on POSIX and final digest checks
+precede publication. Windows reparse-point handling remains best effort.
+See [Phase 7 security and limits](phase-7.md).
 [The audit](upstream-audit.md) records inherited unauthenticated
 routes, wildcard binds and external telemetry. Do not expose that runtime as an
 authenticated Idle-Herd peer. Its optional Anthropic API key protects only that

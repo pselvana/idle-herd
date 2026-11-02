@@ -231,14 +231,16 @@ service_cli = typer.Typer(help="Manage the macOS per-user launchd service.")
 cli.add_typer(service_cli, name="service")
 
 
-def _control_request(method: str, endpoint: str, payload: dict | None = None):
+def _control_request(
+    method: str, endpoint: str, payload: dict | None = None, *, prefix: str = "node"
+):
     try:
         credentials = load_or_create_credentials(PeerSettings().data_dir, create=False)
         token = credentials.read_token if method == "GET" else credentials.control_token
         with httpx.Client(timeout=10.0, trust_env=False) as client:
             response = client.request(
                 method,
-                f"http://127.0.0.1:11435/v1/node/{endpoint}",
+                f"http://127.0.0.1:11435/v1/{prefix}/{endpoint}",
                 headers={"Authorization": f"Bearer {token}"},
                 json=payload,
             )
@@ -251,6 +253,77 @@ def _control_request(method: str, endpoint: str, payload: dict | None = None):
             "Cannot access local control API or credentials; is the daemon running?", err=True
         )
         raise typer.Exit(1) from None
+
+
+models_cli = typer.Typer(help="Authorize model sharing and inspect verified transfers.")
+cli.add_typer(models_cli, name="models")
+
+
+@models_cli.command("inventory")
+def model_inventory():
+    """Show owned artifacts and currently reachable authorized peer offers."""
+    _control_request("GET", "inventory", prefix="models")
+
+
+@models_cli.command("transfers")
+def model_transfers():
+    """Show durable transfer progress and failure reasons."""
+    _control_request("GET", "transfers", prefix="models")
+
+
+@models_cli.command("register")
+def model_register(artifact: Path):
+    """Register an explicit local-artifact JSON with manifest, path and peer permissions."""
+    from fleet_manager.peer.model_sharing import LocalArtifact
+
+    record = LocalArtifact.model_validate_json(artifact.read_bytes())
+    _control_request("POST", "artifacts", record.model_dump(), prefix="models")
+
+
+@models_cli.command("permission")
+def model_permission(digest: str, permission: Path):
+    """Apply a permission JSON; sharing_enabled:false revokes future chunks."""
+    from fleet_manager.local_control.model_sharing import SharePermission
+
+    record = SharePermission.model_validate_json(permission.read_bytes())
+    _control_request("PUT", f"artifacts/{digest}/permission", record.model_dump(), prefix="models")
+
+
+@models_cli.command("copy")
+def model_copy(
+    digest: str,
+    manifest_digest: str,
+    source_worker_id: str,
+    permit: bool = typer.Option(False, "--permit"),
+    accept_license: bool = typer.Option(False, "--accept-license"),
+    retry: bool = typer.Option(False, "--retry"),
+):
+    """Copy one exact manifest; explicitly approve sharing and its source license."""
+    if not permit or not accept_license:
+        raise typer.BadParameter(
+            "Review the source/license; --permit and --accept-license required"
+        )
+    from fleet_manager.local_control.model_sharing import TransferConsent
+
+    spec = TransferConsent(
+        digest=digest,
+        manifest_digest=manifest_digest,
+        source_worker_id=source_worker_id,
+        permission=permit,
+        license_accepted=accept_license,
+    )
+    _control_request(
+        "POST",
+        f"transfers/{digest}/retry" if retry else "transfers",
+        spec.model_dump(),
+        prefix="models",
+    )
+
+
+@models_cli.command("pause")
+def model_pause(digest: str):
+    """Pause a transfer while retaining its untrusted partial for an explicit retry."""
+    _control_request("POST", f"transfers/{digest}/pause", prefix="models")
 
 
 @cli.command()

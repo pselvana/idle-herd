@@ -30,6 +30,11 @@ Only explicitly retry-safe jobs with duplicate consent may recover on another pe
 Reconciliation preserves independent attempts; cancellation cannot free worker
 quarantine. Local jobs and inference have no replication or quorum prerequisite.
 
+[Phase 7](phase-7.md) adds a private model-sharing journal and cache, worker-local
+import locks, per-destination source permission and signed resumable chunks.
+GGUF publication follows verification and an admitted Ollama load. No model
+operation requires a coordinator. MLX/OCI import remains unsupported.
+
 The target is a symmetric native peer: every peer has local ingress, an origin scheduler and journal, worker-local admission, backend adapters, authenticated discovery and host sensors. A peer may be ingress-only if its backend or policy is ineligible. The origin ranks candidates from a freshness-labeled peer view, asks a worker directly for admission, then dispatches using that worker's token. The worker owns its ledger and checks current resources and policy. Jobs, membership, model inventory, lease ledger and optional administrative consensus have distinct authorities; gossip cannot allocate resources. See the ADRs in this directory and the planned API contract in [api.md](api.md).
 
 A reachable healthy peer with an eligible compatible local backend and healthy local storage/resources must accept and execute local work without contacting any other peer or leader. Either survivor of two peers, or any survivor of a larger fleet, retains this property. Both sides of a partition can run independent work. Zero live machines cannot execute work, and a survivor cannot execute a job or model available only on an offline machine. Global capacity, ordering and exactly-once execution are not promised.

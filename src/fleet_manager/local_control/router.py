@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 
 from fleet_manager.local_control import service
 from fleet_manager.local_control.auth import authorize
+from fleet_manager.local_control.model_sharing import transfer_summaries
 from fleet_manager.local_control.models import (
     BackendStatus,
     Diagnostics,
@@ -98,6 +99,9 @@ def create_router() -> APIRouter:
         backend_state = (
             "unknown" if node is None else ("offline" if node.status == "offline" else "online")
         )
+        sharing = getattr(state, "model_sharing", None)
+        transfers = await transfer_summaries(sharing) if sharing else []
+        inventory = await sharing.inventory() if sharing else []
 
         def count(name):
             return sum(
@@ -161,6 +165,11 @@ def create_router() -> APIRouter:
                 running=sum(j.state == "running" for j in jobs.jobs),
                 total=len(jobs.jobs),
             ),
+            transfers=transfers,
+            model_inventory=[
+                item.model_dump(include={"digest", "model_id", "size_bytes", "format"})
+                for item in inventory
+            ],
         )
 
     @router.get("/status", response_model=NodeStatus)
@@ -287,6 +296,8 @@ def create_router() -> APIRouter:
                 kind = "snapshot" if previous is None else "heartbeat"
                 if previous is not None:
                     for field, event_type in (
+                        ("transfers", "transfer"),
+                        ("model_inventory", "model"),
                         ("mode", "mode"),
                         ("jobs", "job"),
                         ("slots", "capacity"),

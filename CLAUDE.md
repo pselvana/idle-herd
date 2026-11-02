@@ -15,6 +15,9 @@ at-least-once recovery. [Phase 6](docs/idle-herd/phase-6.md) adds authenticated
 local owner controls, persistent modes/preferences, a SwiftUI menu bar client
 and explicit macOS user-service configuration. UI lifetime never owns daemon
 lifetime; real launchd/GUI lifecycle acceptance remains unverified.
+[Phase 7](docs/idle-herd/phase-7.md) adds authorized digest-bound standalone GGUF
+sharing, resumable staging, local install locks, admitted Ollama load confirmation
+and menu bar transfer events. Real GGUF/MLX hardware acceptance remains open.
 The router/node commands and historical deployment notes below describe upstream.
 Follow the fork invariants in [AGENTS.md](AGENTS.md) and
 [implementation status](docs/idle-herd/implementation-status.md) before continuing.

@@ -139,7 +139,28 @@ class NodeStatus(Strict):
     slots: SlotStatus
     peers: PeerCounts
     jobs: JobCounts
+    transfers: list["TransferSummary"] = Field(default_factory=list)
+    model_inventory: list["InventorySummary"] = Field(default_factory=list)
     service: Literal["running"] = "running"
+
+
+class TransferSummary(Strict):
+    transfer_id: str
+    digest: str
+    manifest_digest: str
+    model_id: str
+    source_worker_id: str
+    state: str
+    completed_bytes: int
+    total_bytes: int
+    reason: str | None = None
+
+
+class InventorySummary(Strict):
+    digest: str
+    model_id: str
+    size_bytes: int
+    format: str
 
 
 class JobSummary(Strict):
@@ -179,7 +200,9 @@ class Diagnostics(Strict):
 class Event(Strict):
     version: Literal[1] = 1
     id: str
-    type: Literal["snapshot", "heartbeat", "mode", "job", "capacity", "idle", "peer"]
+    type: Literal[
+        "snapshot", "heartbeat", "mode", "job", "capacity", "idle", "peer", "transfer", "model"
+    ]
     scope: Literal["local"] = "local"
     observed_at: float
     data: NodeStatus

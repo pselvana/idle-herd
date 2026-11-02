@@ -1,4 +1,4 @@
-# Local UI and controls: Phase 6 contract
+# Local UI and controls: Phases 6–7 contract
 
 Phase 6 implements the optional macOS `MenuBarExtra`, authenticated peer-local
 mode API, preferences and redacted SSE. See [runtime operation and limits](phase-6.md)
@@ -39,7 +39,9 @@ secret or private path belongs in default status/events. The version 1 envelope
 uses `version`, `id` (matching SSE ID), `type`, `scope`, `observed_at` and typed
 redacted `data`; runtime `/openapi.json` describes actual fields, while the YAML
 retains future extensions. Events include job, mode, capacity, idle and peer
-changes. Model transfers remain Phase 7. Reconnect obtains a fresh snapshot;
+changes; Phase 7 adds `transfer` and `model` events, sampled progress and inventory.
+Copy/retry requires permission and license consent; pause retains private partials.
+See [model-sharing operation](phase-7.md). Reconnect obtains a fresh snapshot;
 a disconnected daemon never appears live from cached state. See
 [ADR 005](adr-005-daemon-ui-and-native-sequence.md) for service ownership.
 

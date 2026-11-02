@@ -10,7 +10,10 @@ daemon. The app connects only to `127.0.0.1:11435`.
 
 The UI polls status alongside the event stream, and shows disconnected/stale
 when the daemon cannot be reached. The displayed cluster view is an estimate.
-Unsupported metrics and future model transfers appear as unknown. Login launch
+Unsupported metrics appear as unknown. Phase 7 displays model inventory, transfer
+progress and reasons with authenticated pause/copy/retry. Copy and retry require
+explicit permission and license acceptance; progress updates through snapshots and
+SSE. See [model sharing](../../../docs/idle-herd/phase-7.md). Login launch
 uses macOS Service Management and may require a signed installed app.
 
 `ClientSmoke` is a Foundation-only mock transport check for authenticated
