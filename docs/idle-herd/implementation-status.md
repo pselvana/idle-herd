@@ -1,5 +1,81 @@
 # Idle-Herd implementation status
 
+## Phase 8 — optional native admin consensus, November 1, 2026
+
+Implemented a separate native Go HashiCorp Raft service with persistent Bolt
+log/stable storage, file snapshots, dedicated-CA mTLS voters and an authenticated
+loopback admin API. Its deterministic allowlist stores only cluster labels and
+operator notes. Python polls status independently and exposes scoped owner metadata
+operations, cached dashboard status and advisory rendezvous preferred-peer advice.
+See [operation/API/security and limits](phase-8.md) and
+[ADR 006](adr-006-admin-consensus.md). Phases 9–10 remain future work.
+
+- [x] Default zero voters; explicit empty-state initialization of 1/3/5-voter
+  groups. Two-voter bootstrap rejected. Existing state refuses rebootstrap;
+  timeouts, partitions and peer discovery never create a replacement history.
+- [x] Dedicated voter transport/credentials and state are separate from peer trust,
+  local owner scopes, model-sharing permissions, worker leases and origin jobs.
+  The only admin FSM keys are `cluster_label` and `operator_note`.
+- [x] Cached node/dashboard/event status, truthful unknown quorum for followers or
+  unreachable service, leader verification and local write availability. Optional
+  service failure never starts a synchronous consensus request in a core path.
+- [x] Advisory preferred peer is deterministic for the observed component only;
+  offline mode withdraws from advice. No scheduler or resource grant relies on it.
+- [x] Real single-voter persistence/API and three-voter Raft partition/restart tests,
+  including minority rejection, majority reelection, reconnection and 1/3 survival.
+- [x] Three native mTLS voter processes killed together while an independent peer
+  consumes a preexisting worker lease, admits a blocked capacity waiter and completes
+  a durable job. Non-bootstrap restart restores committed metadata and admin writes;
+  job results and local inference remain usable. Backends/sensors are fabricated.
+- [ ] Physical LAN partitions, real model/hardware inference, Linux/Windows service
+  runtime, five-voter runtime topology and storage power-loss certification. No
+  automated permanent-quorum-loss recovery or native sidecar installer is provided.
+
+### Phase 8 commands and results
+
+Host: macOS arm64, Python 3.14.2; portable Go 1.25.5 in `/private/tmp/go`.
+The core Python distribution has no new dependency on Go. Build caches/artifacts
+are outside the repository. No daemon/service installation or fleet deployment,
+release/publication, Docker/Compose, worktree, branch or commit was created.
+Work remains directly on `main`; upstream MIT attribution/port map are preserved.
+
+| Command | Result |
+|---|---|
+| `PATH=/private/tmp/go/bin:$PATH GOCACHE=/private/tmp/idle-herd-go-cache .venv/bin/pytest -q --tb=short > /private/tmp/idle-herd-phase8-native-pytest.log 2>&1` with approved native socket/OS access | Exit 0: **2276 passed, 3 skipped, 3 warnings in 106.05s** |
+| Same environment, `.venv/bin/pytest tests/test_peer/test_coordination.py tests/test_peer/test_coordination_native.py -q --tb=short` | Exit 0: **16 passed in 5.91s**, final run including nullable quorum, offline advice, successful/failed scoped metadata forwarding, oversized admin body and zero-port rejection |
+| In `coordination/`: `GOCACHE=/private/tmp/idle-herd-go-cache /private/tmp/go/bin/go test -race -count=1 ./...` and `go vet ./...` with the same tool/cache | Exit 0; **four Go tests**, including maximum-escaped snapshot restore and invalid trailing snapshot rejection; final race run 4.311s |
+| Same Go/cache, `GOOS=linux GOARCH=amd64 go build -o /private/tmp/idle-herd-raft-linux .` and `GOOS=windows GOARCH=amd64 go build -o /private/tmp/idle-herd-raft-windows.exe .` | Exit 0; cross-compilation only, no Linux/Windows runtime claim |
+| `.venv/bin/ruff check src/ tests/test_peer/test_coordination.py tests/test_peer/test_coordination_native.py`; matching `ruff format --check`; `git diff --check` | Exit 0; **115 Python source/test files** checked for formatting |
+
+The first restricted full-suite run failed OS socket/probe cases (**24 failed,
+2247 passed, 8 skipped**) and was repeated with approved native access; assertions
+were retained. The native full-suite result above supersedes those environment
+failures. Three optional ONNX skips, three inherited unawaited-coroutine warnings
+and pytest-asyncio's fixture-loop-scope deprecation remain. Inherited telemetry
+contract tests may contact their existing schema endpoint. A final focused rerun
+covers subsequent small validator/error-label changes; no release/CVE/soak claim.
+
+Status observations expire after three seconds and never authorize a write.
+Followers and unreachable voters cannot establish global quorum, so report null;
+only a leader reports verified true/false. The Go API independently checks live
+leadership/quorum and commits before acknowledging metadata changes. Lost responses
+may hide committed metadata writes; repeated identical key/value assignments are
+safe, with no compare-and-swap or exactly-once promise. Dedicated-CA certificates
+authorize Raft protocol participants rather than binding individual voter IDs;
+protect CA issuance and never reuse the inference-peer CA. POSIX file modes do not
+certify Windows ACLs or hostile same-user isolation. Go membership is static, with
+no discovery-driven enrollment, silent shrink or destructive recovery tool.
+
+### Phase 8 changed files
+
+New Go module: `coordination/{main.go,main_test.go,go.mod,go.sum}`. New Python runtime:
+`peer/coordination.py`; modified `peer/{app,models,capacity}.py` and
+`local_control/{models,router}.py`. New tests: `tests/test_peer/test_coordination.py`
+and `test_coordination_native.py`. New docs: `phase-8.md` and
+`adr-006-admin-consensus.md`; root plan/guidance/README and related architecture,
+API, development, security and observations now identify the Phase 8 boundary.
+Previous phase sections below remain historical evidence.
+
 ## Phase 7 — authorized standalone GGUF sharing, November 1, 2026
 
 Implemented source allowlists and owner consent, authenticated digest-bound manifests

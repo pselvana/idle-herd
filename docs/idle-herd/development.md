@@ -1,6 +1,6 @@
 # Native development, build and test paths
 
-Phases 1–7 retain Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
+Phases 1–8 retain Python package `fleet_manager`, distribution `ollama-herd` 0.12.2,
 and commands `herd` / `herd-node`, and adds `idle-herd` single-node ingress.
 Run `uv run idle-herd` with separately managed local Ollama on port 11434;
 ingress binds 127.0.0.1:11435. See [runtime/configuration/recovery](phase-1.md).
@@ -12,7 +12,8 @@ Sensor tests mock native APIs and helpers; native process fixtures inject synthe
 signals. They do not verify physical activity or hardware thermal/power behavior.
 Phase 6 adds [local owner controls and the SwiftUI menu bar](phase-6.md), plus
 explicit macOS user launchd configuration. The app has a Swift package and Xcode
-project/shared UI-test scheme. No Go sidecar or packaged native installer exists.
+project/shared UI-test scheme. Phase 8 adds a separately built optional Go sidecar;
+no packaged native installer exists for it. See [build, activation and tests](phase-8.md).
 See [verification](implementation-status.md)
 for the actual host/results and [upstream audit](upstream-audit.md) for limitations.
 Docker/Compose is Phase 10 only; it is not a development prerequisite.
@@ -144,3 +145,18 @@ access. It exercises permission denial, interrupted source, persistent partial,
 restart/resume and local survivor inference. Swift `ClientSmoke` verifies progress
 event decoding and consent-bearing retry; full XCTest requires Xcode. These tests
 do not establish real-model/MLX or Windows hardware acceptance. See [Phase 7](phase-7.md).
+
+## Phase 8 optional coordination verification
+
+Go is optional for Python operation. In `coordination/` run `go test -race ./...`
+and `go vet ./...`. With Go on PATH, run this from the root:
+
+```console
+uv run pytest tests/test_peer/test_coordination.py tests/test_peer/test_coordination_native.py -q
+```
+ The native case
+builds the Go service and uses three mTLS voter processes plus independent mock
+backend/peer processes. Alternatively supply `IDLE_HERD_RAFT_BINARY` as an absolute
+path to a built executable. Without Go or that variable, native voter acceptance
+explicitly skips. No real Ollama, weights or container runtime is needed. See
+[Phase 8 operation and verification limits](phase-8.md).

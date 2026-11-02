@@ -47,7 +47,7 @@ class ClusterCapacity(BaseModel):
     busy: bool | None
     globally_authoritative: Literal[False] = False
     discovery_state: Literal["complete_known_view", "partial", "unknown"]
-    quorum: None = None
+    quorum: bool | None = None
     peers: list[PeerCapacity]
     # Local fields preserve the Phase 1 response's useful compatibility surface.
     worker_id: str
@@ -169,6 +169,11 @@ async def cluster_capacity(
         getattr(local_app.state, "identity", None), "cluster_id", "local"
     )
     return ClusterCapacity(
+        quorum=(
+            local_app.state.coordination.snapshot().quorum
+            if getattr(local_app.state, "coordination", None)
+            else None
+        ),
         cluster_id=cluster_id,
         model=model,
         observed_at=datetime.now(UTC),

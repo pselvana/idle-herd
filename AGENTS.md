@@ -1,17 +1,20 @@
 # AGENTS.md — Ollama Herd
 
-## Idle-Herd fork instructions (Phase 7)
+## Idle-Herd fork instructions (Phase 8)
 
 This checkout is the Idle-Herd fork. The upstream guidance below is retained;
 these fork rules govern the architecture where it differs. `idle-herd` now runs
 local ingress and durable worker admission, with opt-in authenticated peer
-discovery/direct dispatch, worker-local idle policy and no Raft. See
+discovery/direct dispatch, worker-local idle policy and optional admin-only Raft. See
 [Phase 2](docs/idle-herd/phase-2.md), [Phase 3](docs/idle-herd/phase-3.md),
 [Phase 4](docs/idle-herd/phase-4.md), and
 [Phase 5 durable jobs](docs/idle-herd/phase-5.md), and
 [Phase 6 owner controls/menu bar](docs/idle-herd/phase-6.md).
 See [Phase 7 authorized GGUF sharing](docs/idle-herd/phase-7.md) for the implemented
 single-file Ollama adapter, explicit permission, resumable transfers and limits.
+See [Phase 8 optional admin consensus](docs/idle-herd/phase-8.md) for the separate
+native Go service, explicit bootstrap and voter-loss evidence. Zero voters remains
+the default; no inference or model-sharing path contacts consensus.
 Legacy `herd` / `herd-node` retain upstream behavior. Start at
 [implementation status](docs/idle-herd/implementation-status.md)
 and the canonical [implementation plan](IDLE-HERD_IMPLEMENTATION_PLAN.md).

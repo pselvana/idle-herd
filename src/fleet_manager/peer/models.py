@@ -57,6 +57,41 @@ class PeerSettings(BaseSettings):
     peer_interval: float = Field(default=5, ge=0.1, le=300)
     peer_ttl: float = Field(default=30, ge=0.2, le=600)
     max_waiters: int = Field(default=256, ge=1, le=10000)
+    # Separately activated admin sidecar. Never consulted by admission/execution.
+    raft_url: str | None = None
+    raft_token_file: str | None = None
+
+    @field_validator("raft_url")
+    @classmethod
+    def loopback_raft(cls, value: str | None) -> str | None:
+        from urllib.parse import urlsplit
+
+        if value is None:
+            return None
+        url = urlsplit(value)
+        if (
+            url.scheme != "http"
+            or url.hostname not in {"127.0.0.1", "::1"}
+            or url.username is not None
+            or url.password is not None
+            or url.path not in {"", "/"}
+            or url.query
+            or url.fragment
+            or not url.port
+            or 11434 <= url.port <= 11449
+        ):
+            raise ValueError("raft_url must be explicit loopback HTTP on a non-backend port")
+        return value.rstrip("/")
+
+    @field_validator("raft_token_file")
+    @classmethod
+    def absolute_raft_token(cls, value: str | None) -> str | None:
+        from pathlib import Path
+
+        if value is not None and not Path(value).is_absolute():
+            raise ValueError("raft_token_file must be an absolute path")
+        return value
+
     model_transfer_bytes_per_second: int = Field(default=10 * 1024 * 1024, ge=1, le=1024**3)
     max_model_cache_bytes: int = Field(default=20 * 1024**3, ge=1)
     model_reserved_disk_bytes: int = Field(default=1024**3, ge=0)

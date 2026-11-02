@@ -1974,3 +1974,14 @@ and idempotent grant return now recheck the deadline afterward. A delayed-sensor
 regression verifies the refusal. Sensor timeouts also cannot publish a late CPU
 baseline or start unbounded background resource workers. These are mocked/native
 process results, not physical sensor or real-model acceptance evidence.
+
+## 2026-11-01 — Phase 8 consensus is independently disposable
+
+The optional native HashiCorp Raft service stores only administrative labels/notes.
+Native fault injection killed every voter while the independent peer consumed an
+existing worker lease, admitted a blocking waiter and completed a durable job.
+Original voters restarted without bootstrap and recovered committed metadata.
+Quorum visibility is unknown from a follower or unreachable sidecar, rather than
+falsely reporting global quorum loss; status separates enabled/reachable/write
+availability. No runtime admission or model-sharing operation reads admin metadata.
+See [Phase 8 evidence and limits](idle-herd/implementation-status.md).

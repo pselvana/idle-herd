@@ -1,4 +1,4 @@
-# Security boundary: Phases 1–7 and target design
+# Security boundary: Phases 1–8 and target design
 
 The table below is the target threat model. Phase 1 `idle-herd` binds ingress to
 127.0.0.1, rejects non-loopback clients, unexpected Host and browser Origin/cross-site
@@ -55,6 +55,14 @@ throttles and destination-local install locks constrain transfers. Owner consent
 revocation checks per chunk, no-follow source opens on POSIX and final digest checks
 precede publication. Windows reparse-point handling remains best effort.
 See [Phase 7 security and limits](phase-7.md).
+Phase 8 adds a separate admin-only Raft domain. Dedicated-CA mTLS protects voter
+RPC; possession of a voter-CA-issued certificate authorizes protocol participation,
+so ordinary inference-peer certificates must never be issued by that CA. A separate
+private bearer credential and strict loopback Host/Origin checks protect admin
+HTTP. Only labels/notes enter the FSM; metadata never updates worker policy, trust,
+leases or jobs. Quorum is unknown when unavailable or observed from a follower;
+only verified leaders accept writes. No automatic voter rebootstrap or discovery-
+driven membership change exists. See [Phase 8 limits](phase-8.md).
 [The audit](upstream-audit.md) records inherited unauthenticated
 routes, wildcard binds and external telemetry. Do not expose that runtime as an
 authenticated Idle-Herd peer. Its optional Anthropic API key protects only that

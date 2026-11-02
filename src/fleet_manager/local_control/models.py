@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from fleet_manager.peer.coordination import CoordinationStatus
 from fleet_manager.peer.models import IdleMode
 
 
@@ -141,6 +142,7 @@ class NodeStatus(Strict):
     jobs: JobCounts
     transfers: list["TransferSummary"] = Field(default_factory=list)
     model_inventory: list["InventorySummary"] = Field(default_factory=list)
+    coordination: CoordinationStatus = Field(default_factory=CoordinationStatus)
     service: Literal["running"] = "running"
 
 

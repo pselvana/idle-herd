@@ -18,6 +18,12 @@ lifetime; real launchd/GUI lifecycle acceptance remains unverified.
 [Phase 7](docs/idle-herd/phase-7.md) adds authorized digest-bound standalone GGUF
 sharing, resumable staging, local install locks, admitted Ollama load confirmation
 and menu bar transfer events. Real GGUF/MLX hardware acceptance remains open.
+[Phase 8](docs/idle-herd/phase-8.md) adds separately activated native Go admin
+consensus, bounded cached status and advisory preferred-peer selection. Its FSM
+only stores cluster labels/operator notes; never worker leases, job runtime or
+owner policy. No inference path contacts it. Bootstrap is explicit and never
+repeated automatically after quorum loss. See the status document for voter-death
+tests and remaining native platform limitations.
 The router/node commands and historical deployment notes below describe upstream.
 Follow the fork invariants in [AGENTS.md](AGENTS.md) and
 [implementation status](docs/idle-herd/implementation-status.md) before continuing.

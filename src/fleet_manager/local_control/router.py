@@ -36,6 +36,12 @@ from fleet_manager.local_control.models import (
     SlotStatus,
     WorkerLease,
 )
+from fleet_manager.peer.coordination import (
+    CoordinationStatus,
+    CoordinationUnavailable,
+    MetadataUpdate,
+    MetadataView,
+)
 from fleet_manager.peer.jobs import JobConflict
 
 
@@ -170,7 +176,28 @@ def create_router() -> APIRouter:
                 item.model_dump(include={"digest", "model_id", "size_bytes", "format"})
                 for item in inventory
             ],
+            coordination=(
+                state.coordination.snapshot(request.app, participating=mode.mode != "offline")
+                if getattr(state, "coordination", None)
+                else CoordinationStatus()
+            ),
         )
+
+    @router.get("/coordination/metadata", response_model=MetadataView)
+    async def metadata(request: Request):
+        authorize(request)
+        try:
+            return await request.app.state.coordination.metadata()
+        except CoordinationUnavailable as exc:
+            raise HTTPException(503, "optional admin coordination unavailable") from exc
+
+    @router.put("/coordination/metadata", response_model=MetadataView)
+    async def update_metadata(spec: MetadataUpdate, request: Request):
+        authorize(request, control=True)
+        try:
+            return await request.app.state.coordination.metadata(spec)
+        except CoordinationUnavailable as exc:
+            raise HTTPException(503, "optional admin coordination unavailable") from exc
 
     @router.get("/status", response_model=NodeStatus)
     async def status(request: Request):

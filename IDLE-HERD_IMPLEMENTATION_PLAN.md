@@ -1,14 +1,15 @@
 # Idle-Herd — Implementation Plan
 
-> **Status:** Phases 0–4 implement design/audit, single-node admission, opt-in
-> peer dispatch, worker-local idle policy and bounded capacity acquisition.
-> Legacy commands retain upstream behavior. Phases 5–10 remain future work. See
+> **Status:** Phases 0–8 implement native peers, worker-local admission, idle
+> policy, capacity waits, durable jobs, owner controls, GGUF sharing and optional
+> admin-only consensus. Legacy commands retain upstream behavior. Phases 9–10
+> remain future work; hardware/native lifecycle limits remain open. See
 > [verification and remaining risks](docs/idle-herd/implementation-status.md).
 > **Prepared:** November 1, 2026  
 > **Primary development environment:** Visual Studio Code + OpenAI Codex IDE extension  
 > **Target:** Cross-platform, peer-to-peer, idle-aware independent LLM inference; no dedicated inference router; **fully functional with 1, 2, or 3+ intermittently connected nodes and no guaranteed Raft quorum**.
-> **Revision:** 8 — records Phase 4 visibility-aware capacity, worker-token
-> acquisition and origin waiters, with explicit uncertainty and verification limits.
+> **Revision:** 12 — records optional native admin consensus and voter-loss
+> independence, with explicit uncertainty and verification limits.
 
 This file, `IDLE-HERD_IMPLEMENTATION_PLAN.md`, is the canonical implementation plan.
 The architecture below describes the target system; completed design work does not
@@ -336,7 +337,7 @@ Retain `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/api/chat`, `/ap
 
 - `busy=true` means **no capacity is currently observed among fresh eligible reachable peers for this request**, not that all cluster nodes are busy. `busy` should be `null` if discovery/eligibility is too incomplete to assess; client should call acquire for ground truth.
 - A dead/offline node never artificially contributes available slots. `known_nodes` may include offline peers; a temporarily unreachable machine may return later.
-- `quorum` is `null` when the optional Raft service is disabled, otherwise `true`/`false`. **Never conflate `quorum=false` with `available_slots=0`.**
+- `quorum` is `null` when optional Raft is disabled or global quorum is unknown (follower/unreachable observer); a leader verifies `true`/`false`. Authenticated node status distinguishes enabled/reachable/local write availability. **Never conflate `quorum=false` with `available_slots=0`.**
 - Model-specific context, backend, idle policy, quantization, architecture, and expected resource headroom affect estimates. Keep `observed_` prefix or equivalent on all gossip-derived totals.
 - Offer `GET /v1/cluster/status`, `/v1/cluster/nodes`, and `/v1/cluster/models` with per-peer freshness and optional coordinator health.
 
@@ -884,13 +885,21 @@ complete backend compatibility certification and physical GUI acceptance remain 
 
 ### Phase 8 — **Optional Raft coordination / advisory leader election**
 
-- [ ] Add a Go HashiCorp Raft component as a **separately activated native optional service**, with a deterministic FSM limited to optional admin metadata/settings (not worker reservations, not durable job runtime).
-- [ ] Support zero voters (default), one voter (optional), and 3/5 voters (when stable enough). A 2-voter setup may be allowed for experimentation but must warn it tolerates zero failures.
-- [ ] Integrate Raft status into dashboard/local node status. On leader loss or no quorum, pause only quorum-dependent settings changes. Inference, local queues, peer admission, capacity wait and model transfer MUST stay functional.
-- [ ] Implement advisory preferred-peer selection for non-critical background optimization when no Raft leader is available, with no correctness reliance on uniqueness.
-- [ ] Test leader disappearance, quorum loss, voter restart, 2:1 partition, 1 of 3 still online, and reconnection. **Never silently self-bootstrap a new Raft group from a partition.**
+- [x] Add a Go HashiCorp Raft component as a **separately activated native optional service**, with a deterministic FSM limited to optional admin metadata/settings (not worker reservations, not durable job runtime).
+- [x] Support zero voters (default), one voter (optional), and 3/5 voters (when stable enough). Two-voter bootstrap is rejected because it tolerates zero failures.
+- [x] Integrate Raft status into dashboard/local node status. On leader loss or no quorum, pause only quorum-dependent settings changes. Inference, local queues, peer admission, capacity wait and model transfer MUST stay functional.
+- [x] Implement advisory preferred-peer selection for non-critical background optimization when no Raft leader is available, with no correctness reliance on uniqueness.
+- [x] Test leader disappearance, quorum loss, voter restart, 2:1 partition, 1 of 3 still online, and reconnection. **Never silently self-bootstrap a new Raft group from a partition.**
 
 **Acceptance:** Fault injection takes down every voter: any still-running peer completes locally admissible jobs. On restored quorum, optional metadata consensus resumes without invalidating worker-issued leases or durable local jobs.
+
+Implementation/evidence: [Phase 8 operation and limits](docs/idle-herd/phase-8.md),
+[ADR 006](docs/idle-herd/adr-006-admin-consensus.md) and
+[status](docs/idle-herd/implementation-status.md). The Go FSM is restricted to
+labels/notes. Go fault tests cover 2:1 partitions and persistent restart; native
+process tests kill all voters while worker leases, waits, inference and jobs
+continue. Five-voter configuration is supported but not runtime-certified;
+Linux/Windows service and physical LAN acceptance remain unverified.
 
 ### Phase 9 — Native desktop polish, diagnostics, chaos tests, release readiness
 
@@ -1181,13 +1190,14 @@ limitations rather than treating roadmap guarantees as implemented behavior.
 - OpenAI Codex VS Code extension: https://marketplace.visualstudio.com/items?itemName=OpenAI.chatgpt
 - Codex IDE workflow: https://learn.chatgpt.com/docs/codex/ide
 
-**Revision:** November 1, 2026 (v11). Records Phase 0–7 implementation,
+**Revision:** November 1, 2026 (v12). Records Phase 0–8 implementation,
 including worker-local idle policy, native sensor interfaces, origin capacity waits
 and durable jobs with acknowledged peer copies. Hardware sensor
 and backend acceptance and documented recovery/fit limits remain explicit.
 Phase 7 implements standalone GGUF sharing with declared compatibility limits;
-real GGUF/MLX load and physical GUI/service acceptance remain open. Phases 8–10
-remain future work; optional Raft stays outside inference and
+real GGUF/MLX load and physical GUI/service acceptance remain open. Phase 8 adds
+optional native admin-only Raft and voter-loss tests. Phases 9–10 remain future
+work; optional Raft stays outside inference and
 Docker/Compose stays in Phase 10. Any upstream guidance suggesting an always-on
 router or mandatory Raft must be interpreted using current §§0–4, 8–9, 11–12.
 

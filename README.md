@@ -1,9 +1,9 @@
 # Idle-Herd
 
-This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 7**.
+This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 8**.
 `uv run idle-herd` starts single-node localhost ingress and durable worker-owned
 slot reservations in one process. Opt-in authenticated peer discovery and direct
-streaming need no leader or live seed; Raft is absent. It uses a
+streaming need no leader or live seed; optional admin Raft is disabled by default. It uses a
 separately running local Ollama on port 11434; ingress stays on port 11435.
 Install this checkout with `uv sync --extra dev` first. Legacy `herd` and `herd-node`
 remain available; run one ingress on port 11435 at a time.
@@ -29,6 +29,10 @@ remains unverified. [Phase 7 model sharing](docs/idle-herd/phase-7.md) adds opt-
 standalone GGUF/Ollama transfers with hashes, permissions, resumable staging,
 destination-local locks and menu bar progress. MLX and real-model loading acceptance
 remain open; no automatic registry fallback or cross-format conversion is provided.
+[Phase 8 optional consensus](docs/idle-herd/phase-8.md) adds a separate native Go
+service for admin labels/notes only, explicit bootstrap and cached dashboard status.
+Killing every voter leaves worker admission, capacity waits and inference working.
+No automatic voter rebootstrap or membership shrink occurs after quorum loss.
 Native socket tests use a mock model backend; real hardware sensors and
 Ollama/hardware inference have not been verified by this implementation.
 

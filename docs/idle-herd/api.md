@@ -54,3 +54,20 @@ fetch the redacted status snapshot; the page keeps the token only in browser mem
 The page offers no management actions. A fuller dashboard is planned for Phase 9.
 Same-origin browser reads require the bearer token; browser control writes and
 cross-origin requests remain rejected.
+
+## Phase 8 optional administrative coordination
+
+The implemented local status/dashboard and sampled events include `coordination`
+with enabled/reachable state, observed quorum/leader, local write availability and
+advisory preferred peer. Cluster capacity/health expose cached quorum independently
+of slots. `null` means unknown (including followers or an unreachable service),
+or disabled; consult authenticated node status for the distinction. No core path
+contacts the optional service.
+
+`GET /v1/node/coordination/metadata` requires the existing read credential;
+`PUT` requires the control credential and a bounded `{key,value}` body restricted
+to `cluster_label` or `operator_note`. Missing service, non-leader writes and
+quorum loss return 503 only for these administrative operations. Read responses
+mark `consistent: false` for potentially stale local committed data. The peer RPC
+listener has no admin route. [Phase 8](phase-8.md) defines the separate Go API,
+bootstrap and dedicated voter credentials; the draft OpenAPI remains a subset.

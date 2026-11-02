@@ -173,17 +173,21 @@ class LocalBoundary:
             return await JSONResponse(
                 status_code=403, content={"error": {"type": "local_clients_only"}}
             )(scope, receive, send)
-        if (scope["path"] == "/v1/jobs" and scope["method"] == "POST") or (
-            scope["path"].startswith("/v1/models/") and scope["method"] in {"POST", "PUT"}
+        if (
+            (scope["path"] == "/v1/jobs" and scope["method"] == "POST")
+            or (scope["path"].startswith("/v1/models/") and scope["method"] in {"POST", "PUT"})
+            or (scope["path"] == "/v1/node/coordination/metadata" and scope["method"] == "PUT")
         ):
             try:
-                body = await read_body(receive, 256 * 1024)
+                limit = 4096 if scope["path"] == "/v1/node/coordination/metadata" else 256 * 1024
+                body = await read_body(receive, limit)
             except AdmissionError:
-                reason = (
-                    "job_request_too_large"
-                    if scope["path"] == "/v1/jobs"
-                    else "model_request_too_large"
-                )
+                if scope["path"] == "/v1/jobs":
+                    reason = "job_request_too_large"
+                elif scope["path"] == "/v1/node/coordination/metadata":
+                    reason = "admin_request_too_large"
+                else:
+                    reason = "model_request_too_large"
                 await trace_failure(self.local, reason)
                 return await JSONResponse(status_code=413, content={"error": {"type": reason}})(
                     scope, receive, send
@@ -290,6 +294,11 @@ def create_peer_app(
             app.state.directory = None
             app.state.peer_error = None
             app.state.peer_task = None
+            from fleet_manager.peer.coordination import AdminCoordination
+
+            app.state.coordination = AdminCoordination(settings)
+            await app.state.coordination.open()
+            stack.push_async_callback(app.state.coordination.close)
             await refresh_local(app)
 
             peer_task = None
@@ -593,7 +602,7 @@ def create_peer_app(
             "worker_id": app.state.ledger.worker_id,
             "discovery": "peer_to_peer" if app.state.directory else "disabled",
             "peer_error": app.state.peer_error,
-            "quorum": None,
+            "quorum": app.state.coordination.snapshot().quorum,
         }
 
     @app.get("/v1/cluster/peers")

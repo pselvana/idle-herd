@@ -1,4 +1,4 @@
-# Idle-Herd architecture: Phase 5 and target design
+# Idle-Herd architecture: Phase 8 and target design
 
 **Current runtime:** `idle-herd` combines localhost ingress, local Ollama inventory,
 and durable worker admission in one native process. Phase 2 adds a separately
@@ -39,7 +39,13 @@ The target is a symmetric native peer: every peer has local ingress, an origin s
 
 A reachable healthy peer with an eligible compatible local backend and healthy local storage/resources must accept and execute local work without contacting any other peer or leader. Either survivor of two peers, or any survivor of a larger fleet, retains this property. Both sides of a partition can run independent work. Zero live machines cannot execute work, and a survivor cannot execute a job or model available only on an offline machine. Global capacity, ordering and exactly-once execution are not promised.
 
-Optional Raft, if implemented, is limited to strict administrative metadata and is off by default. Loss of quorum suspends quorum-dependent admin writes only; it must never block inference, acquisition, waiting, local jobs or model transfers. No automatic voter rebootstrap is allowed. See [ADR: peer availability](adr-001-peer-availability.md).
+Optional Raft is a separately activated native Go service limited to labels/notes
+and off by default. Loss of quorum suspends admin writes only; inference,
+acquisition, waiting, local jobs and model transfers never contact it. Python polls
+status independently with bounded freshness. Advisory preferred-peer selection has
+no correctness authority. No automatic voter rebootstrap is allowed. See
+[Phase 8](phase-8.md), [ADR 006](adr-006-admin-consensus.md) and the original
+[availability decision](adr-001-peer-availability.md).
 
 The daemon owns policy and execution; a future SwiftUI menu bar app and CLI are authenticated clients of its local API, not its lifetime or scheduling authority. Native macOS, Linux and Windows development precedes Docker/Compose, which is reserved for Phase 10. Existing port assignments remain unchanged: Ollama 11434, router 11435, image 11436, STT 11437, vision embedding 11438, text embedding 11439 and MLX 11440+. Future peer interfaces must not silently reassign or collide with them.
 
