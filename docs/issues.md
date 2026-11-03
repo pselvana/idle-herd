@@ -3767,3 +3767,20 @@ now rechecks expiry immediately before changing to running, and idempotent acqui
 rechecks before returning its grant. Delayed-sensor regressions deny both paths;
 no expired lease authorizes backend dispatch. Running/quarantined leases remain
 charged independently of expiry.
+
+### FIXED — menu bar unknown values and unreadable status (2026-11-03)
+
+Total host memory depended on successful Ollama inventory, failed initial backend
+probes stayed `unknown`, and remote slot estimates were never populated. Native
+memory now comes from the sensor; backend failure/recovery and observation time are
+recorded; fresh authenticated peer diagnostics provide advisory slot estimates.
+Missing peer observations remain unavailable instead of implying zero capacity.
+
+The SwiftUI companion now formats measurements, labels AC/battery power, explains
+policy reasons and unsupported GPU/thermal measurements, identifies the local Mac,
+and keeps participation/navigation visible while scrolling. Failed legacy job
+detail fetches are visible; slow sharing fetches cannot make old status look fresh.
+The native Xcode app target also has an unambiguous UI-test host name. Python and
+Swift regressions pass; native automated UI interaction remains unverified because
+macOS automation-mode initialization timed out. See
+[current evidence and limits](idle-herd/implementation-status.md).

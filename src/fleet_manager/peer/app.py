@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -102,8 +103,12 @@ async def refresh_local(app: FastAPI):
     try:
         tags, running = await backend.inventory()
     except AdmissionError:
+        app.state.backend_reachable = False
+        app.state.backend_observed_at = time.time()
         app.state.registry.handle_drain(ledger.worker_id)
         return
+    app.state.backend_reachable = True
+    app.state.backend_observed_at = time.time()
     mem = await asyncio.to_thread(psutil.virtual_memory)
     payload = HeartbeatPayload(
         node_id=ledger.worker_id,

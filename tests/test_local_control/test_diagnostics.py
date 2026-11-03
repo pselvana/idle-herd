@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 
 from fleet_manager.cli import peer_cli
 from fleet_manager.local_control.auth import load_or_create_credentials
+from fleet_manager.local_control.models import ModeUpdate
 from fleet_manager.peer.app import create_peer_app
 from fleet_manager.peer.discovery import ModelCapability, PeerDescriptor, PeerStatus
 from fleet_manager.peer.jobs import JobSubmission
@@ -128,6 +129,123 @@ async def test_doctor_reports_missing_backend_and_donation_quota_without_grantin
             assert "11434" in fit["remedy"]
             assert report["quarantined_slots"] == 0
             assert (await app.state.ledger.job_summaries()) == []
+
+
+@pytest.mark.asyncio
+async def test_backend_failure_and_recovery_do_not_hide_host_memory(tmp_path, monkeypatch):
+    from fleet_manager.peer.app import refresh_local
+    from fleet_manager.peer.sensors import IdleSignal
+
+    class HostSensor:
+        async def sample(self):
+            return IdleSignal(
+                observed_at=time.time(),
+                source="test_host",
+                memory_available_gb=22.7,
+                memory_total_gb=64,
+            )
+
+    monkeypatch.setattr("fleet_manager.peer.app.native_sensor", lambda helper=None: HostSensor())
+    online = False
+
+    def response(request):
+        return httpx.Response(200, json={"models": []}) if online else httpx.Response(503)
+
+    app = create_peer_app(
+        PeerSettings(data_dir=str(tmp_path)), backend_transport=httpx.MockTransport(response)
+    )
+    async with app.router.lifespan_context(app):
+        headers = {"Authorization": "Bearer " + app.state.control_credentials.read_token}
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost:11435"
+        ) as client:
+            for expected in ("offline", "online", "offline", "online"):
+                online = expected == "online"
+                await refresh_local(app)
+                status = (await client.get("/v1/node/status", headers=headers)).json()
+                assert status["backend"]["state"] == expected
+                assert 0 <= time.time() - status["backend"]["observed_at"] < 5
+                assert status["resources"]["memory_available_gb"] == 22.7
+                assert status["resources"]["memory_total_gb"] == 64
+                assert status["resources"]["gpu_percent"] is None
+                assert status["resources"]["thermal_state"] == "unknown"
+                assert status["peers"]["observed_available_slots"] == 0
+
+
+@pytest.mark.asyncio
+async def test_remote_slot_estimates_require_complete_fresh_observations(tmp_path):
+    from fleet_manager.peer.diagnostics import PeerObservation
+
+    app = create_peer_app(
+        PeerSettings(data_dir=str(tmp_path)), backend_transport=httpx.MockTransport(backend)
+    )
+    async with app.router.lifespan_context(app):
+        remote = SimpleNamespace(
+            worker_id="remote",
+            reachable=True,
+            observed_at=time.time(),
+            descriptor=SimpleNamespace(incarnation="current", models=[]),
+        )
+        app.state.directory = SimpleNamespace(snapshot=lambda: [remote])
+        cache = app.state.peer_diagnostics
+        observation = PeerObservation(
+            worker_id="remote",
+            worker_incarnation="current",
+            observed_at=time.time(),
+            platform="Test OS",
+            models=[],
+            sensor_source="test_host",
+            activity="idle",
+            eligible=True,
+            total_slots=4,
+            reserved_slots=1,
+            running_slots=1,
+            quarantined_slots=1,
+            waiters=0,
+            queued_jobs=0,
+            running_jobs=1,
+            replicated_jobs=0,
+        )
+        headers = {"Authorization": "Bearer " + app.state.control_credentials.read_token}
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost:11435"
+        ) as client:
+
+            async def slots():
+                status = (await client.get("/v1/node/status", headers=headers)).json()
+                return status["peers"]["observed_available_slots"]
+
+            assert await slots() is None
+            cache._cache["remote"] = (time.monotonic(), observation)
+            assert await slots() == 1  # Reservations, running work and quarantine all occupy slots.
+            cache._cache["remote"] = (
+                time.monotonic(),
+                observation.model_copy(update={"eligible": False}),
+            )
+            assert await slots() == 0
+            cache._cache["remote"] = (time.monotonic() - cache.ttl - 1, observation)
+            assert await slots() is None
+            cache._cache["remote"] = (
+                time.monotonic(),
+                observation.model_copy(update={"worker_incarnation": "old"}),
+            )
+            assert await slots() is None
+            cache._cache["remote"] = (time.monotonic(), observation)
+            second = SimpleNamespace(
+                worker_id="other",
+                reachable=True,
+                observed_at=time.time(),
+                descriptor=SimpleNamespace(incarnation="current", models=[]),
+            )
+            app.state.directory = SimpleNamespace(snapshot=lambda: [remote, second])
+            assert (
+                await slots() is None
+            )  # One fresh peer cannot make an incomplete sum look complete.
+            second.reachable = False
+            assert await slots() == 1
+            await app.state.ledger.set_mode(ModeUpdate(mode="offline"))
+            assert await slots() == 0
+        app.state.directory = None
 
 
 def test_doctor_friendly_json_and_model_parameter(monkeypatch, tmp_path):

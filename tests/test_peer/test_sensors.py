@@ -279,9 +279,11 @@ async def test_cancelled_resource_worker_cannot_advance_cpu_baseline(monkeypatch
     assert (await sensor.sample()).cpu_percent == pytest.approx(10)
 
 
-def test_memory_available_uses_decimal_gigabytes(monkeypatch):
+def test_memory_available_and_total_use_decimal_gigabytes(monkeypatch):
     memory = namedtuple("Memory", "available total")
     monkeypatch.setattr(
         sensors.psutil, "virtual_memory", lambda: memory(2_000_000_000, 4_000_000_000)
     )
-    assert sensors.NativeSensor("other")._resources()["memory_available_gb"] == 2
+    resources = sensors.NativeSensor("other")._resources()
+    assert resources["memory_available_gb"] == 2
+    assert resources["memory_total_gb"] == 4

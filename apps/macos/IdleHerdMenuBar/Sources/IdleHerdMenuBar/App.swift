@@ -11,6 +11,7 @@ import IdleHerdCore
     @Published var inventory: [ModelInventoryItem] = []
     @Published var transfers: [ModelTransfer] = []
     @Published var sharingError: String?
+    @Published var jobsError: String?
     @Published var connected = false
     @Published var lastUpdate: Date?
     @Published var error: String?
@@ -29,6 +30,7 @@ import IdleHerdCore
     private var stream: Task<Void, Never>?
     private var polling: Task<Void, Never>?
     private var freshness: Task<Void, Never>?
+    private var refreshing = false
 
     func start() {
         guard stream == nil else { return }
@@ -58,24 +60,36 @@ import IdleHerdCore
         }
     }
     func refresh() async {
+        guard !refreshing else { return }
+        refreshing = true
+        defer { refreshing = false }
         do {
             let snapshot = try await client.fetch("v1/node/status")
-            let jobSnapshot = try? await client.fetch("v1/node/jobs")
             try apply(snapshot)
-            jobs = (jobSnapshot?["worker_leases"] as? [[String: Any]]) ?? []
-            originJobs = (jobSnapshot?["jobs"] as? [[String: Any]]) ?? []
+            // Current daemons include jobs in the status snapshot. Retain the
+            // jobs endpoint only for older daemons, and never hide fetch errors.
+            if snapshot["worker_leases"] == nil || snapshot["job_history"] == nil {
+                do {
+                    let jobSnapshot = try await client.fetch("v1/node/jobs")
+                    jobs = (jobSnapshot["worker_leases"] as? [[String: Any]]) ?? []
+                    originJobs = (jobSnapshot["jobs"] as? [[String: Any]]) ?? []
+                    jobsError = nil
+                } catch { jobsError = "Job details unavailable: \(error.localizedDescription)" }
+            }
             do {
                 let inventory = try await client.inventory()
                 self.inventory = inventory
                 if self.snapshot?.transfers == nil { self.transfers = try await client.transfers() }
                 sharingError = nil
             } catch { inventory = self.snapshot?.model_inventory ?? []; sharingError = "Model sharing status unavailable: \(error.localizedDescription)" }
-            connected = true; lastUpdate = Date(); error = nil
         } catch { connected = false; self.error = error.localizedDescription }
     }
     func apply(_ object: [String: Any]) throws {
         let validated = try NodeSnapshot.decode(object)
         snapshot = validated; status = object
+        if let leases = object["worker_leases"] as? [[String: Any]] { jobs = leases }
+        if let history = object["job_history"] as? [[String: Any]] { originJobs = history }
+        if object["worker_leases"] != nil && object["job_history"] != nil { jobsError = nil }
         if let values = validated.transfers { transfers = values }
         if let local = validated.model_inventory {
             let remote = inventory.filter { $0.local == false }
@@ -120,23 +134,16 @@ import IdleHerdCore
     }
     func value(_ keys: String...) -> String {
         var current: Any = status
-        for key in keys { guard let dict = current as? [String: Any], let next = dict[key] else { return "unknown" }; current = next }
+        for key in keys { guard let dict = current as? [String: Any], let next = dict[key] else { return "—" }; current = next }
         if let value = current as? String { return value }
         if let value = current as? NSNumber { return value.stringValue }
-        return "unknown"
+        return "—"
     }
-    var count: String { connected ? snapshot.map { String($0.slots.running) } ?? "unknown" : "unknown" }
-    var eligibility: String {
-        guard let idle = snapshot?.idle else { return "unknown" }
-        return idle.reason ?? (idle.eligible ? "Eligible" : "unknown")
-    }
+    var count: String { connected ? snapshot.map { String($0.slots.running) } ?? "—" : "—" }
+    var presentation: StatusPresentation { StatusPresentation(snapshot) }
     var availableSlots: String {
-        guard let slots = snapshot?.slots else { return "unknown" }
+        guard let slots = snapshot?.slots else { return "—" }
         return String(max(0, slots.total - slots.occupied))
-    }
-    var models: String {
-        guard let backend = status["backend"] as? [String: Any], let models = backend["models_loaded"] as? [String] else { return "unknown" }
-        return models.isEmpty ? "none" : models.joined(separator: ", ")
     }
     func originLocation(_ job: [String: Any]) -> String {
         guard let worker = job["worker_id"] as? String else { return "unassigned or unknown" }
@@ -144,7 +151,7 @@ import IdleHerdCore
         return worker == local ? "local worker" : "remote worker"
     }
     var telemetryAge: String {
-        guard let resource = status["resources"] as? [String: Any], let stamp = resource["observed_at"] as? Double else { return "unknown" }
+        guard let stamp = snapshot?.resources?.observed_at, stamp.isFinite, stamp > 0 else { return "Sample time not reported" }
         return "\(max(0, Int(Date().timeIntervalSince1970 - stamp)))s ago"
     }
     func jobDescription(_ job: [String: Any]) -> String {
@@ -180,104 +187,33 @@ struct ContentView: View {
     @State private var retryTransfer: ModelTransfer?
     @State private var diagnostics = ""
     var body: some View {
-        ScrollView { VStack(alignment: .leading, spacing: 9) {
-            HStack { Text("Idle-Herd").font(.headline); Spacer(); Text(model.connected ? "Connected" : "Disconnected · stale").foregroundStyle(model.connected ? Color.secondary : Color.orange) }
-            Text("Mode: \(model.snapshot?.mode.mode ?? "unknown") · Peer background: \(model.eligibility)")
-            if let last = model.lastUpdate { Text("Last updated \(last.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.secondary) }
+        VStack(spacing: 0) {
+            header.padding(14)
             Divider()
-            Text("LOCAL JOBS").font(.caption.bold())
-            Text("Running: \(model.count) · Queued: \(model.value("jobs", "queued")) · Reserved: \(model.value("slots", "reserved"))")
-            ForEach(Array(model.jobs.prefix(5).enumerated()), id: \.offset) { _, job in
-                Text(model.jobDescription(job))
-                    .lineLimit(1)
-            }
-            Text("ORIGIN JOURNAL").font(.caption.bold())
-            ForEach(Array(model.originJobs.prefix(3).enumerated()), id: \.offset) { _, job in
-                HStack {
-                    Text("\(job["model"] as? String ?? "unknown model") · \(job["state"] as? String ?? "unknown") · \(model.originLocation(job))").lineLimit(1)
-                    Spacer()
-                    if let id = job["job_id"] as? String,
-                       let state = job["state"] as? String,
-                       ["queued", "reserving", "running", "retry_pending", "unknown_outcome"].contains(state),
-                       (job["cancel_requested"] as? Bool) != true {
-                        Button("Cancel…") { cancelJobID = id }.disabled(!model.connected || model.busy)
-                            .accessibilityLabel("Cancel origin job \(job["model"] as? String ?? "unknown model")")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let error = model.error {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange).textSelection(.enabled)
                     }
-                }
-            }
-            Text("RESOURCES").font(.caption.bold())
-            Text("CPU: \(model.value("resources", "cpu_percent"))% · Memory available: \(model.value("resources", "memory_available_gb")) / \(model.value("resources", "memory_total_gb")) GB")
-            Text("GPU: \(model.value("resources", "gpu_percent")) · Unoccupied slots: \(model.availableSlots) / \(model.value("slots", "total")) · Backend: \(model.value("backend", "state"))")
-            Text("Loaded models: \(model.models)").lineLimit(2)
-            Text("AC: \(model.value("resources", "on_ac")) · Battery: \(model.value("resources", "battery_percent"))% · Thermal: \(model.value("resources", "thermal_state"))")
-            Text("Resource sample: \(model.telemetryAge) · \(model.value("resources", "source"))").font(.caption)
-            Text("CLUSTER (reachable estimate)").font(.caption.bold())
-            Text("Known: \(model.value("peers", "known")) · Reachable: \(model.value("peers", "reachable")) · Stale: \(model.value("peers", "stale"))")
-            Text("Remote slots indicated: \(model.value("peers", "observed_available_slots")) · Capacity waiters: \(model.value("waiters"))")
-            if let peers = model.status["peer_details"] as? [[String: Any]], !peers.isEmpty {
-                DisclosureGroup("Peer details") {
-                    ForEach(Array(peers.enumerated()), id: \.offset) { _, peer in
-                        VStack(alignment: .leading) {
-                            Text("\(peer["worker_id"] as? String ?? "unknown") · \((peer["reachable"] as? Bool) == true ? "reachable" : "unreachable")")
-                            Text("Platform: \(peer["platform"] as? String ?? "unknown") · Backend: \(peer["backend"] as? String ?? "unknown") · Models: \((peer["models"] as? [String])?.joined(separator: ", ") ?? "unknown")").font(.caption)
-                            Text("Incarnation: \(peer["incarnation"] as? String ?? "unknown") · Observed: \((peer["observed_at"] as? Double).map { Date(timeIntervalSince1970: $0).formatted() } ?? "unknown")").font(.caption)
-                            if let reason = peer["reason"] as? String { Text(reason).font(.caption) }
-                        }.textSelection(.enabled)
-                    }
-                }
-            }
-            Text("MODEL INVENTORY & TRANSFERS").font(.caption.bold())
-            if let error = model.sharingError { Text(error).font(.caption).foregroundStyle(.orange) }
-            if model.inventory.isEmpty && model.sharingError == nil { Text("No models in inventory").font(.caption) }
-            ScrollView { VStack(alignment: .leading) {
-            ForEach(model.inventory) { item in
-                Text("\(item.model_id) · \(item.format ?? "unknown format") · \((item.total_bytes ?? item.size_bytes).map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "size unknown")").lineLimit(1)
-            }
-            ForEach(model.transfers) { transfer in
-                VStack(alignment: .leading) {
-                    HStack {
-                        Text("\(transfer.model_id ?? "unknown model") · \(transfer.state)").lineLimit(1)
-                        Spacer()
-                        if ["queued", "transferring", "downloading"].contains(transfer.state) {
-                            Button("Pause") { model.transferAction(transfer, action: "pause") }.disabled(!model.connected || model.busy)
-                        } else if ["paused", "failed", "waiting", "rejected"].contains(transfer.state) {
-                            Button("Retry…") { retryTransfer = transfer }.disabled(!model.connected || model.busy)
+                    jobsSection
+                    resourcesSection
+                    clusterSection
+                    sharingSection
+                    if let error = model.actionError {
+                        HStack {
+                            Text(error).foregroundStyle(.red).font(.caption).textSelection(.enabled)
+                            Button("Dismiss") { model.actionError = nil }
                         }
                     }
-                    if transfer.total_bytes > 0 {
-                        ProgressView(value: Double(max(0, transfer.completed_bytes)), total: Double(transfer.total_bytes))
-                        Text("\(ByteCountFormatter.string(fromByteCount: transfer.completed_bytes, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: transfer.total_bytes, countStyle: .file))").font(.caption)
-                    }
-                    if let reason = transfer.reason, !reason.isEmpty { Text(reason).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
-                }
-            }
-            } }.frame(maxHeight: 180)
-            Button("Copy model from peer…") { showingTransfer = true }.disabled(!model.connected || model.busy)
-            Divider()
-            HStack {
-                Button("Automatic") { model.changeMode("auto") }
-                Button("Drain") { model.changeMode("draining") }
-                Button("Offline") { confirm = "offline" }.accessibilityLabel("Go offline")
-                Button("Pause") { confirm = "paused" }.accessibilityLabel("Pause new inference")
-            }.disabled(model.busy || !model.connected)
-            Button("Offline for 1 hour") { model.changeMode("offline", duration: 3600) }.disabled(model.busy || !model.connected)
-            Text("Offline keeps local inference available. Pause stops new inference. Running work finishes.").font(.caption).foregroundStyle(.secondary)
-            if let error = model.error { Text(error).foregroundStyle(.red).font(.caption).textSelection(.enabled) }
-            if let error = model.actionError {
-                HStack {
-                    Text(error).foregroundStyle(.red).font(.caption).textSelection(.enabled)
-                    Button("Dismiss") { model.actionError = nil }
-                }
+                }.padding(14)
             }
             Divider()
-            HStack {
-                Button("Dashboard") { NSWorkspace.shared.open(URL(string: "http://127.0.0.1:11435/dashboard")!) }
-                Button("Preferences…") { showingPreferences = true }
-                Button("Diagnostics…") { Task { await loadDiagnostics() } }
-                Spacer()
-                Button("Quit UI") { NSApplication.shared.terminate(nil) }
-            }
-        }.padding(14) }.frame(width: 440, height: 650)
+            controlsSection.padding(.horizontal, 14).padding(.vertical, 10)
+            Divider()
+            footer.padding(12)
+        }
+        .frame(width: 440, height: min(700, max(360, (NSScreen.main?.visibleFrame.height ?? 800) - 90)))
             .alert(confirm == "offline" ? "Go offline?" : "Pause new inference?", isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } })) {
                 Button(confirm == "offline" ? "Go offline" : "Pause") { if let mode = confirm { model.changeMode(mode) }; confirm = nil }
                 Button("Cancel", role: .cancel) { confirm = nil }
@@ -293,6 +229,223 @@ struct ContentView: View {
                 VStack(alignment: .leading) { Text("Diagnostics").font(.headline); ScrollView { Text(diagnostics).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }; Button("Close") { showingDiagnostics = false } }.padding().frame(width: 480, height: 300)
             }
     }
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("Idle-Herd").font(.headline)
+                Spacer()
+                Circle().fill(model.connected ? Color.green : Color.orange).frame(width: 7, height: 7)
+                Text(model.connected ? "Connected" : (model.lastUpdate == nil ? "Connecting…" : "Disconnected · stale"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                Text("Mode: \(model.presentation.mode)").font(.subheadline.bold())
+                Spacer()
+                if model.busy { ProgressView().controlSize(.small) }
+            }
+            Text(model.presentation.eligibility).font(.subheadline).foregroundStyle(.secondary)
+                .help("Eligibility for incoming background peer work. Local inference follows its own policy and backend availability.")
+            if let expiry = model.snapshot?.mode.expires_at {
+                Text("Returns to Automatic at \(Date(timeIntervalSince1970: expiry).formatted(date: .omitted, time: .shortened))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let last = model.lastUpdate {
+                Text("Updated \(last.formatted(date: .omitted, time: .standard))\(model.connected ? "" : " · Last received values")")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text(title).font(.caption.bold()).foregroundStyle(.secondary)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func row(_ title: String, _ value: String, id: String? = nil) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title).foregroundStyle(.secondary).frame(width: 110, alignment: .leading)
+            Spacer(minLength: 0)
+            Text(value).multilineTextAlignment(.trailing).textSelection(.enabled)
+                .accessibilityIdentifier(id ?? title)
+        }.font(.callout)
+    }
+
+    private var jobsSection: some View {
+        section("LOCAL JOBS") {
+            HStack(spacing: 18) {
+                jobCount(model.count, "Running")
+                jobCount(model.value("jobs", "queued"), "Queued at origin")
+                jobCount(model.value("slots", "reserved"), "Reserved")
+            }
+            if let error = model.jobsError { Text(error).font(.caption).foregroundStyle(.orange) }
+            ForEach(Array(model.jobs.prefix(5).enumerated()), id: \.offset) { _, job in
+                Text(model.jobDescription(job)).font(.caption).lineLimit(2)
+            }
+            DisclosureGroup("Origin journal") {
+                if model.originJobs.isEmpty {
+                    Text(model.jobsError == nil ? "No jobs submitted from this Mac." : "Job history unavailable.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(Array(model.originJobs.prefix(3).enumerated()), id: \.offset) { _, job in
+                    HStack {
+                        Text("\(job["model"] as? String ?? "Model unavailable") · \(StatusPresentation.label(job["state"] as? String)) · \(model.originLocation(job))")
+                            .font(.caption).lineLimit(2)
+                        Spacer()
+                        if let id = job["job_id"] as? String,
+                           let state = job["state"] as? String,
+                           ["queued", "reserving", "running", "retry_pending", "unknown_outcome"].contains(state),
+                           (job["cancel_requested"] as? Bool) != true {
+                            Button("Cancel…") { cancelJobID = id }.disabled(!model.connected || model.busy)
+                                .accessibilityLabel("Cancel origin job \(job["model"] as? String ?? "Model unavailable")")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func jobCount(_ value: String, _ title: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value).font(.title3.weight(.semibold)).monospacedDigit()
+            Text(title).font(.caption).foregroundStyle(.secondary)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var resourcesSection: some View {
+        section("THIS MAC") {
+            row("CPU", model.presentation.cpu, id: "cpuValue")
+            row("Memory", model.presentation.memory, id: "memoryValue")
+            row("GPU", model.presentation.gpu)
+                .help("GPU utilization is shown only when reported by the host sensor. Missing data does not mean 0% usage.")
+            row("Power", model.presentation.power, id: "powerValue")
+            if model.snapshot?.resources?.battery_percent != nil { row("Battery", model.presentation.battery) }
+            row("Thermal", model.presentation.thermal)
+                .help("The current macOS host sensor does not report thermal state. Missing data is never treated as a nominal measurement.")
+            Divider()
+            row("Backend", model.presentation.backend, id: "backendValue")
+            if model.snapshot?.backend?.state == "offline" {
+                Text("Start Ollama to run local models. Check Diagnostics for connection details.")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            row("Loaded models", model.presentation.loadedModels)
+            row("Unoccupied slots", "\(model.availableSlots) of \(model.value("slots", "total"))")
+                .help("Unoccupied slots describe local lease occupancy. Admission also checks policy, quarantine, backend and model resources.")
+            if let quarantined = model.snapshot?.slots.quarantined, quarantined > 0 {
+                Label("\(quarantined) quarantined slot(s) need reconciliation", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            Text("\(model.presentation.sensorSource) · \(model.telemetryAge)")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private var clusterSection: some View {
+        section("PEERS · REACHABLE ESTIMATE") {
+            if model.snapshot?.peers?.known == 0 {
+                Text("No other peers discovered").font(.callout)
+                Text("This Mac can run local inference on its own when its backend and resources are ready.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                row("Peers", "\(model.value("peers", "reachable")) reachable · \(model.value("peers", "known")) known · \(model.value("peers", "stale")) stale")
+            }
+            row("Remote slots", model.presentation.remoteSlots, id: "remoteSlotsValue")
+                .help("An advisory estimate from fresh peer observations. The destination worker must admit each request.")
+            row("Capacity waiters", model.value("waiters"))
+            if let peers = model.status["peer_details"] as? [[String: Any]], !peers.isEmpty {
+                DisclosureGroup("Device details") {
+                    ForEach(Array(peers.enumerated()), id: \.offset) { _, peer in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text((peer["local"] as? Bool) == true ? "This Mac · Local" : "\(peer["worker_id"] as? String ?? "Peer") · \((peer["reachable"] as? Bool) == true ? "Reachable" : "Unreachable")")
+                                .font(.caption.bold())
+                            Text("\(StatusPresentation.label(peer["platform"] as? String)) · \(StatusPresentation.label(peer["backend"] as? String))")
+                            Text("Models: \((peer["models"] as? [String]).map { $0.isEmpty ? "None advertised" : $0.joined(separator: ", ") } ?? "Not reported")")
+                            if let reason = peer["reason"] as? String { Text(StatusPresentation.label(reason)).foregroundStyle(.secondary) }
+                        }.font(.caption).textSelection(.enabled).padding(.vertical, 4)
+                    }
+                }.font(.callout)
+            }
+        }
+    }
+
+    private var sharingSection: some View {
+        section("MODEL INVENTORY & TRANSFERS") {
+            if let error = model.sharingError { Text(error).font(.caption).foregroundStyle(.orange) }
+            if model.inventory.isEmpty && model.sharingError == nil {
+                Text("No shareable models found").font(.callout)
+                Text("Inventory lists models eligible for sharing, including models advertised by peers.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(model.inventory.prefix(5)) { item in
+                Text("\(item.model_id) · \(item.format ?? "Format not reported") · \((item.total_bytes ?? item.size_bytes).map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "Size not reported")")
+                    .font(.caption).lineLimit(2)
+            }
+            if model.inventory.count > 5 { Text("\(model.inventory.count - 5) more models available in the copy dialog").font(.caption).foregroundStyle(.secondary) }
+            ForEach(model.transfers) { transfer in
+                VStack(alignment: .leading) {
+                    HStack {
+                        Text("\(transfer.model_id ?? "Model unavailable") · \(StatusPresentation.label(transfer.state))").lineLimit(2)
+                        Spacer()
+                        if ["queued", "transferring", "downloading"].contains(transfer.state) {
+                            Button("Pause") { model.transferAction(transfer, action: "pause") }.disabled(!model.connected || model.busy)
+                        } else if ["paused", "failed", "waiting", "rejected"].contains(transfer.state) {
+                            Button("Retry…") { retryTransfer = transfer }.disabled(!model.connected || model.busy)
+                        }
+                    }
+                    if transfer.total_bytes > 0 {
+                        ProgressView(value: Double(min(transfer.total_bytes, max(0, transfer.completed_bytes))), total: Double(transfer.total_bytes))
+                        Text("\(ByteCountFormatter.string(fromByteCount: transfer.completed_bytes, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: transfer.total_bytes, countStyle: .file))").font(.caption)
+                    }
+                    if let reason = transfer.reason, !reason.isEmpty { Text(reason).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+                }.font(.callout)
+            }
+            Button("Copy model from peer…") { showingTransfer = true }.disabled(!model.connected || model.busy)
+        }
+    }
+
+    private var controlsSection: some View {
+        section("PARTICIPATION") {
+            HStack {
+                modeButton("Automatic", "auto") { model.changeMode("auto") }
+                modeButton("Drain", "draining") { model.changeMode("draining") }
+                modeButton("Offline", "offline") { confirm = "offline" }.accessibilityLabel("Go offline")
+                modeButton("Pause", "paused") { confirm = "paused" }.accessibilityLabel("Pause new inference")
+            }.disabled(model.busy || !model.connected)
+            Button("Offline for 1 hour") { model.changeMode("offline", duration: 3600) }.disabled(model.busy || !model.connected)
+            Text("Offline keeps local inference available. Pause stops new inference. Running work finishes.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func modeButton(_ title: String, _ mode: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                if model.snapshot?.mode.mode == mode { Image(systemName: "checkmark").font(.caption2) }
+                Text(title)
+            }
+        }.help(model.snapshot?.mode.mode == mode ? "Current mode: \(title)" : "Switch to \(title)")
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Button("Dashboard") { NSWorkspace.shared.open(URL(string: "http://127.0.0.1:11435/dashboard")!) }
+            Button("Preferences…") { showingPreferences = true }
+            Menu {
+                Button("Diagnostics…") { Task { await loadDiagnostics() } }
+                Button("Refresh now") { Task { await model.refresh() } }
+                Divider()
+                Button("Quit UI") { NSApplication.shared.terminate(nil) }
+            } label: { Image(systemName: "ellipsis.circle") }
+                .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("More actions")
+            Spacer(minLength: 0)
+            Text("Daemon runs independently").font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
     func loadDiagnostics() async {
         do {
             let data = try await model.client.fetch("v1/node/diagnostics")
@@ -338,7 +491,11 @@ struct PreferencesView: View {
             }
             Text("Daemon policy").font(.subheadline.bold())
             Picker("Background policy", selection: $backgroundPolicy) {
-                ForEach(["always", "idle_only", "utilization_only", "manual", "never"], id: \.self) { Text($0) }
+                Text("Always (subject to resource limits)").tag("always")
+                Text("Only while idle").tag("idle_only")
+                Text("When system usage is low").tag("utilization_only")
+                Text("Manual approval").tag("manual")
+                Text("Never").tag("never")
             }
             TextField("Idle time (seconds)", text: $idleSeconds)
             TextField("Battery floor (%)", text: $batteryFloor)

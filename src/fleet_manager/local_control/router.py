@@ -108,6 +108,8 @@ def create_router() -> APIRouter:
         backend_state = (
             "unknown" if node is None else ("offline" if node.status == "offline" else "online")
         )
+        if getattr(state, "backend_reachable", None) is False:
+            backend_state = "offline"
         sharing = getattr(state, "model_sharing", None)
         transfers = await transfer_summaries(sharing) if sharing else []
         inventory = await sharing.inventory() if sharing else []
@@ -201,6 +203,20 @@ def create_router() -> APIRouter:
                 )
             )
         waiters = getattr(state, "waiters", None)
+        # Only sum fresh, authenticated observations. A missing observation must
+        # not turn a partial view into a claim of zero available remote capacity.
+        reachable_details = [item for item in details if not item.local and item.reachable]
+        remote_slots = (
+            sum(
+                max(0, item.slots.total - item.slots.occupied) if item.eligible else 0
+                for item in reachable_details
+                if item.slots is not None
+            )
+            if all(
+                item.slots is not None and item.eligible is not None for item in reachable_details
+            )
+            else None
+        )
 
         return NodeStatus(
             worker_id=state.ledger.worker_id,
@@ -231,7 +247,11 @@ def create_router() -> APIRouter:
                 cpu_percent=signal.cpu_percent,
                 gpu_percent=signal.gpu_percent,
                 memory_available_gb=signal.memory_available_gb,
-                memory_total_gb=node.memory.total_gb if node and node.memory else None,
+                memory_total_gb=(
+                    signal.memory_total_gb
+                    if signal.memory_total_gb is not None
+                    else (node.memory.total_gb if node and node.memory else None)
+                ),
                 memory_pressure=signal.memory_pressure,
                 on_ac=signal.on_ac,
                 battery_percent=signal.battery_percent,
@@ -245,7 +265,9 @@ def create_router() -> APIRouter:
                 models_loaded=[_model_name(m.name) for m in node.ollama.models_loaded]
                 if node and node.ollama
                 else [],
-                observed_at=node.last_heartbeat if node else None,
+                observed_at=getattr(
+                    state, "backend_observed_at", node.last_heartbeat if node else None
+                ),
             ),
             slots=SlotStatus(
                 total=state.ledger.settings.slots,
@@ -259,6 +281,7 @@ def create_router() -> APIRouter:
                 stale=sum(mode.mode == "offline" or not p.reachable for p in peers),
                 reachable=sum(mode.mode != "offline" and p.reachable for p in peers),
                 unreachable=sum(mode.mode == "offline" or not p.reachable for p in peers),
+                observed_available_slots=remote_slots,
             ),
             jobs=JobCounts(
                 queued=sum(j.state in {"queued", "reserving", "retry_pending"} for j in jobs.jobs),

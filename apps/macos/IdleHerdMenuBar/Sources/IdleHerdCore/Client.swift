@@ -179,13 +179,34 @@ public struct NodeClient {
 
 /// Fields used to make live status and control decisions. Unknown fields remain forward compatible.
 public struct NodeSnapshot: Decodable {
-    public struct Mode: Decodable { public let mode: String }
-    public struct Slots: Decodable { public let running: Int; public let total: Int; public let occupied: Int }
-    public struct Idle: Decodable { public let eligible: Bool; public let reason: String? }
+    public struct Mode: Decodable { public let mode: String; public let expires_at: Double? }
+    public struct Slots: Decodable {
+        public let running: Int; public let total: Int; public let occupied: Int
+        public let reserved: Int?; public let quarantined: Int?
+    }
+    public struct Idle: Decodable {
+        public let eligible: Bool; public let reason: String?; public let policy: String?
+    }
+    public struct Resources: Decodable {
+        public let cpu_percent: Double?; public let gpu_percent: Double?
+        public let memory_available_gb: Double?; public let memory_total_gb: Double?
+        public let on_ac: Bool?; public let battery_percent: Double?
+        public let thermal_state: String?; public let source: String?; public let observed_at: Double?
+    }
+    public struct Backend: Decodable {
+        public let state: String; public let models_loaded: [String]; public let models_available: [String]?
+    }
+    public struct Peers: Decodable {
+        public let known: Int; public let reachable: Int; public let stale: Int
+        public let observed_available_slots: Int?
+    }
     public let version: Int
     public let mode: Mode
     public let slots: Slots
     public let idle: Idle
+    public let resources: Resources?
+    public let backend: Backend?
+    public let peers: Peers?
     public let transfers: [ModelTransfer]?
     public let model_inventory: [ModelInventoryItem]?
     public static func decode(_ object: [String: Any]) throws -> NodeSnapshot {

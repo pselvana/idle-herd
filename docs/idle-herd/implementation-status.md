@@ -1,5 +1,50 @@
 # Idle-Herd implementation status
 
+## Menu bar UX and status corrections — November 3, 2026
+
+Corrected the status paths behind the menu bar screenshot and reorganized the
+existing native companion; this is maintenance within the implemented phases.
+
+- Total memory is sampled with available memory in decimal GB, independently of
+  Ollama registry health. A failed initial backend inventory probe now records
+  Offline and its observation time, including recovery and subsequent failures.
+- Remote slot estimates use fresh, incarnation-bound authenticated peer diagnostics,
+  subtracting reserved/running/quarantined occupancy and excluding ineligible peers.
+  No reachable peers yields zero; incomplete observations remain unavailable.
+  These values remain advisory and never grant worker admission.
+- Swift presentation rounds CPU/GPU percentages and memory, spells out power state,
+  translates policy reasons, distinguishes unavailable backend inventory from no
+  loaded models, and explains unsupported GPU/thermal readings without inventing data.
+- The popover has labeled resource rows, explicit empty states, expandable origin
+  history/device details, a local-device label, selected mode/expiry indication, and
+  persistent header/participation controls/navigation. Diagnostics, refresh and Quit
+  UI are in More actions. Preferences display readable background policy choices.
+- Status/event snapshots supply job details directly. Older-daemon job fetch errors
+  are visible instead of silently clearing jobs. Overlapping polls are serialized;
+  slow inventory responses no longer advance the status freshness timestamp.
+- The Xcode native app target is now named `Idle-Herd`, resolving its collision with
+  the package executable when selecting the UI test host. Debug fixtures include
+  realistic resources, empty states and request-body stream handling.
+
+Verification on macOS ARM64, Python 3.14.2, Xcode 16.2:
+
+| Check | Result |
+|---|---|
+| `.venv/bin/pytest -q --tb=short` with native socket access | **2315 passed, 8 skipped, 3 warnings in 116.75s**; `/private/tmp/idle-herd-ux-pytest.log` |
+| Focused owner controls, sensors, policy, peer diagnostics and ingress suite | **135 passed in 10.77s**, including backend-down memory and complete/incomplete/stale remote-capacity regressions |
+| `swift test --package-path apps/macos/IdleHerdMenuBar --scratch-path /private/tmp/idle-herd-ux-swift --disable-sandbox` with module caches in `/private/tmp` | **10 passed**; includes formatting, missing/zero/false readings, older snapshots, backend and peer-capacity presentation |
+| Swift package and native ARM64 Xcode app/UI-test builds | Passed; local UI runner used ad hoc signing |
+| Actual `ContentView` rendered offscreen in an AppKit hosting view using synthetic status | Visually inspected `/private/tmp/idle-herd-ux-preview.png`; row wrapping, unavailable values, fixed controls and footer fit |
+| Native XCTest UI execution | **Not verified**: signed runner timed out enabling macOS automation mode; `/private/tmp/idle-herd-ux-xcode-final.log` and `/private/tmp/idle-herd-ux-ui-final.xcresult` |
+| Ruff lint/format and `git diff --check` | Passed |
+
+A direct native sensor check also reported total/available memory and AC/battery
+without a backend. This is not physical idle, GPU/thermal, sleep/wake, VoiceOver,
+service lifecycle or real-inference acceptance. GPU and macOS thermal measurements
+remain unsupported/unknown in the daemon; the UI reports that limitation. No live
+daemon restart, installation, release, signed distribution or publication was done.
+Earlier phase evidence and remaining acceptance gates below remain in force.
+
 ## Phase 10 — optional OCI/Compose deployment, November 1, 2026
 
 Implemented optional multi-architecture peer and separate consensus images, locked

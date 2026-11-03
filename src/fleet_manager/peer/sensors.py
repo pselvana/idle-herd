@@ -29,6 +29,7 @@ class IdleSignal(BaseModel):
     session_locked: bool | None = None
     cpu_percent: float | None = Field(default=None, ge=0, le=100)
     memory_available_gb: float | None = Field(default=None, ge=0)
+    memory_total_gb: float | None = Field(default=None, gt=0)
     memory_pressure: Literal["normal", "warning", "critical", "unknown"] = "unknown"
     on_ac: bool | None = None
     battery_percent: float | None = Field(default=None, ge=0, le=100)
@@ -242,6 +243,9 @@ class NativeSensor:
             memory = vm.available / 1_000_000_000
             if math.isfinite(memory) and memory >= 0:
                 result["memory_available_gb"] = memory
+            total = vm.total / 1_000_000_000
+            if math.isfinite(total) and total > 0:
+                result["memory_total_gb"] = total
             if self.platform.startswith("linux") and vm.total > 0 and 0 <= vm.available <= vm.total:
                 used = 100 * (vm.total - vm.available) / vm.total
                 result["memory_pressure"] = (
