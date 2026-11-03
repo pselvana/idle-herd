@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")/.."
+if ! xcodebuild -version >/dev/null 2>&1; then
+    echo "error: Full Xcode is required to build this SwiftUI app; Command Line Tools alone do not include the SwiftUI macro plugin." >&2
+    echo "Install Xcode, then select it with: sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer" >&2
+    exit 1
+fi
 swift build -c release
 app="${1:-build/Idle-Herd.app}"
 mkdir -p "$app/Contents/MacOS"

@@ -1,6 +1,11 @@
 # Idle-Herd menu bar
 
-Requires macOS 13 or later and Swift 5.9 or later. Run `swift test` and
+Requires macOS 13 or later, Swift 5.9 or later, and the full Xcode installation
+with its SwiftUI macro plugins. The standalone Command Line Tools package is not
+sufficient to build this SwiftUI app. If `xcodebuild -version` fails, install
+Xcode and select its developer directory with
+`sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer`.
+Run `swift test` and
 `scripts/package.sh`, then open `build/Idle-Herd.app`. The package script
 creates an unsigned local development app; distribution signing and notarization
 are not provided. Start the daemon separately. In Preferences, import the
