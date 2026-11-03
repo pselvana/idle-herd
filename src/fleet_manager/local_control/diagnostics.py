@@ -154,6 +154,21 @@ async def diagnose(app, status: NodeStatus, model: str | None) -> Diagnostics:
             else None,
         ),
         DiagnosticCheck(
+            code="bonjour",
+            title="Bonjour LAN discovery",
+            state="attention" if getattr(app.state, "mdns_error", None) else "ok",
+            detail=(
+                "Multicast discovery unavailable; local inference remains independent."
+                if getattr(app.state, "mdns_error", None)
+                else "Automatic Bonjour discovery configured."
+                if app.state.ledger.settings.mdns_enabled
+                else "Bonjour disabled; explicit peer endpoints/seeds remain supported."
+            ),
+            remedy="Check multicast UDP 5353, interface permissions and LAN client isolation."
+            if getattr(app.state, "mdns_error", None)
+            else None,
+        ),
+        DiagnosticCheck(
             code="coordination",
             title="Optional admin coordination",
             state="ok" if not status.coordination.enabled else "unknown",

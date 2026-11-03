@@ -2,6 +2,14 @@
 
 ## Idle-Herd fork instructions (Phase 10)
 
+Native `idle-herd` now defaults to Bonjour/mDNS discovery and automatic LAN trust
+as requested by the owner. See [Bonjour operation/trust](docs/idle-herd/bonjour.md).
+Signed public advertisements establish device-specific durable pins; subsequent
+RPC still requires TLS, signatures and replay protection. Identity domains/ledgers
+remain intact. Restricted deployments disable `IDLE_HERD_LAN_AUTO_TRUST`; disabling
+`IDLE_HERD_MDNS_ENABLED` retains manual endpoint/seed operation. Containers keep
+manual defaults. These rules supersede the older opt-in discovery descriptions.
+
 This checkout is the Idle-Herd fork. The upstream guidance below is retained;
 these fork rules govern the architecture where it differs. `idle-herd` now runs
 local ingress and durable worker admission, with opt-in authenticated peer

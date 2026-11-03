@@ -1,5 +1,56 @@
 # Idle-Herd implementation status
 
+## Native Bonjour mesh formation — November 3, 2026
+
+Implemented the owner's requested automatic Bonjour discovery and automatic LAN
+trust. Native `uv run idle-herd` now allocates a separate OS-selected TLS peer port,
+creates its device identity, and browses/advertises `_idle-herd._tcp.local.` after
+the peer listener is ready. No seeds, enrollment steps, first-node authority or
+admin quorum are needed to form the inference mesh. Existing localhost/backend
+ports, worker admission, policy, model permissions and API translators are retained.
+See [operation, trust controls and limitations](bonjour.md).
+
+Public announcements bind certificates and resolved private endpoints with a
+device signature. Device-specific trust pins persist before authorization and
+reject changed keys, authorities and identity domains. RPC still requires verified
+TLS, signatures and durable anti-replay nonces; discovery never grants capacity.
+Independent authority domains federate without rewriting worker/cluster IDs or
+durable history. Strict enrolled mode can use Bonjour without automatic LAN trust;
+explicit endpoints/seeds remain supported. Containers retain manual defaults.
+
+Departure, offline mode, address changes and restart ports are integrated with
+discovery lifecycle. Bonjour failures report separately in health/doctor and leave
+localhost inference and available seeded TLS operation running. Concurrent
+resolutions, pins and endpoints are bounded. Real-multicast tests use a unique
+service type per test and temporary identities, never the production namespace.
+
+Verification on macOS ARM64 / Python 3.14.2:
+
+- Final full regression: `.venv/bin/pytest -q --tb=short` with native sockets —
+  **2327 passed, 8 skipped, 3 inherited warnings in 124.66s**;
+  `/private/tmp/idle-herd-bonjour-final-pytest.log`.
+- Real multicast/TLS test: three independent identities form a mesh with no seeds
+  or enrollment, dispatch both ways, survive first-node death, reconnect after
+  restart, withdraw in offline mode, retain local inference, then rejoin.
+- Unit coverage checks signed TXT/address/port binding, durable trust/replay,
+  key/authority/domain pinning, strict rejection, bounded resolutions, candidate
+  freshness, endpoint replacement, offline withdrawal and multicast-failure
+  isolation. Existing worker-fencing/recovery tests remain intact.
+- Enrollment-only native Bonjour test discovers and dispatches both ways without
+  seeds or automatic trust. The complete suite includes both real-multicast tests.
+- `.venv/bin/ruff check src/` and the modified tests pass; format checks pass
+  across all source and changed tests (125 files); `git diff --check` passes.
+
+Limits: native tests use separate processes on this macOS host with fabricated
+backends, not a physical two-machine or real-inference acceptance run. Automatic
+address selection advertises one private IPv4 interface at a time; multi-homed
+LANs, physical roaming, Linux/Windows multicast/firewall behavior and Docker LAN
+multicast need host-specific verification. Automatic LAN trust deliberately treats
+LAN presence as initial authorization; authority revocation remains domain-local.
+Credentials retain their existing finite lifetime and renewal requirements. The
+existing two running daemons have not been restarted/deployed by this change;
+`pstudio.local` could not be inspected because SSH authentication was unavailable.
+
 ## Menu bar UX and status corrections — November 3, 2026
 
 Corrected the status paths behind the menu bar screenshot and reorganized the

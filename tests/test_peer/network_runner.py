@@ -184,10 +184,69 @@ async def serve_peer(directory, backend, port, seeds):
             await rpc_task
 
 
+async def serve_bonjour_peer(directory, backend, service_type, auto_trust=True):
+    """Exercise production CLI startup, changing only the fixed local test port."""
+    from fleet_manager.cli import peer_cli
+    from fleet_manager.peer.models import PeerSettings
+    from fleet_manager.peer.sensors import IdleSignal
+
+    class HealthySensor:
+        async def sample(self):
+            return IdleSignal(observed_at=time.time(), source="test", memory_available_gb=48)
+
+    original_server = uvicorn.Server
+
+    class ReportingServer(original_server):
+        def __init__(self, config):
+            self.local = config.port == 11435
+            if self.local:
+                config.port = 0
+            config.log_level = "warning"
+            super().__init__(config)
+
+        async def serve(self, sockets=None):
+            async def protected():
+                try:
+                    await super(ReportingServer, self).serve(sockets=sockets)
+                except SystemExit as exc:
+                    raise OSError("test listener failed") from exc
+
+            running = asyncio.create_task(protected())
+            if self.local:
+                while not self.started:
+                    if running.done():
+                        await running
+                        raise RuntimeError("local listener failed")
+                    await asyncio.sleep(0.01)
+                port = self.servers[0].sockets[0].getsockname()[1]
+                print(json.dumps({"url": f"http://127.0.0.1:{port}"}), flush=True)
+            await running
+
+    peer_cli.uvicorn.Server = ReportingServer
+    await peer_cli.serve(
+        PeerSettings(
+            data_dir=directory,
+            backend_url=backend,
+            mdns_service_type=service_type,
+            lan_auto_trust=auto_trust,
+            background_policy="always",
+            request_memory_gb=0.000001,
+            reserve_memory_gb=0,
+            peer_interval=0.2,
+            peer_ttl=2,
+        ),
+        sensor=HealthySensor(),
+    )
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "backend":
         asyncio.run(serve_backend(sys.argv[2]))
     elif sys.argv[1] == "peer":
         asyncio.run(serve_peer(*sys.argv[2:5], json.loads(sys.argv[5])))
+    elif sys.argv[1] == "bonjour-peer":
+        asyncio.run(serve_bonjour_peer(*sys.argv[2:5]))
+    elif sys.argv[1] == "bonjour-strict-peer":
+        asyncio.run(serve_bonjour_peer(*sys.argv[2:5], auto_trust=False))
     else:
         raise ValueError(f"unknown role: {sys.argv[1]}")

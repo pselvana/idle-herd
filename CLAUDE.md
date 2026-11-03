@@ -2,6 +2,14 @@
 
 ## Idle-Herd fork status
 
+Native `idle-herd` now enables Bonjour peer discovery and automatic LAN trust by
+default. See [Bonjour operation/trust](docs/idle-herd/bonjour.md). Independent
+identities federate through pinned certificates; ledgers/UUIDs are not reassigned.
+Disable `IDLE_HERD_LAN_AUTO_TRUST` for enrollment-only clusters, or
+`IDLE_HERD_MDNS_ENABLED` for manual endpoint/seed operation. Containers retain
+manual defaults unless explicitly opted in. Earlier phase descriptions below
+record their original behavior.
+
 Phase 2 adds offline device-specific enrollment, authenticated TLS peer exchange,
 persisted reconnection endpoints and worker-direct streaming to `uv run idle-herd`.
 Every node retains independent localhost ingress and durable worker admission.

@@ -160,7 +160,7 @@ localhost:11435              localhost:11435              localhost:11435
 ### Required roles (every node, including a single-node cluster)
 
 - **Peer ingress:** Hosts OpenAI/Ollama-compatible local API, forwards inference to the accepted worker, streams response directly back to the caller, handles local authorization.
-- **Discovery:** Static seeds and bidirectional authenticated peer exchange with optional mDNS and Tailscale discovery. Every peer maintains last-seen, endpoint, capabilities, TTL, identity, and reachability; seed discovery must not require the seed to remain online after convergence.
+- **Discovery:** Native Bonjour/mDNS discovery and automatic LAN trust by default, with static seeds and bidirectional authenticated peer exchange retained. Tailscale API discovery remains optional/unimplemented. Every peer maintains last-seen, endpoint, capabilities, TTL, identity, and reachability; seed discovery must not require the seed to remain online after convergence.
 - **Local admission authority:** Reserves/releases its *own* model slots, serializes contention, persists lease records, and enforces idle policy and resource checks at dispatch time.
 - **Origin job journal:** Persists jobs accepted through that peer (SQLite WAL or another local embedded store), retry metadata, and result locations. Optional encrypted peer replication requires explicit durability acknowledgments.
 - **Backend/sensor adapters:** Collect host metrics and execute inference using local or host-exposed engines.
@@ -172,6 +172,12 @@ localhost:11435              localhost:11435              localhost:11435
 - **Replica peer:** Stores encrypted or authenticated job manifest/input/result copies and may undertake allowed retryable jobs after an origin disappears, subject to duplicate-execution tradeoffs documented below.
 
 ### Discovery, trust, membership
+
+Native LAN operation now defaults to [Bonjour mesh formation](docs/idle-herd/bonjour.md)
+at the owner's request. Signed announcements establish device-specific durable
+pins, followed by authenticated TLS exchange. Independent identity domains federate
+without rewriting worker ledgers or changing admin membership. The enrollment
+workflow below applies when `IDLE_HERD_LAN_AUTO_TRUST=false`.
 
 1. `idle-herd init` on the first node creates a stable cluster UUID, local node keypair, a trust anchor, and a persistent local state directory. A one-node deployment is complete; **no Raft bootstrap is required**.
 2. Add a second/third node with a pre-authorized invite signed by a trusted administrator or pair directly over a protected channel. Authenticated peers exchange known endpoints and signed inventory digests. Join is independent of voting membership.
@@ -792,16 +798,18 @@ required before reclaiming it. Phase 4's full capacity contract is still a draft
 ### Phase 2 — Peer-to-peer discovery and dispatch with intermittent nodes
 
 - [x] Add signed identity, trust anchor, seed discovery, bidirectional peer exchange and TTL reachability cache.
-- [ ] Optional LAN mDNS adapter (deferred; static seeds and peer exchange satisfy core acceptance).
+- [x] Native Bonjour/mDNS adapter, enabled by default with automatic LAN trust, durable device pins, automatic peer ports and offline/restart lifecycle handling (November 3, 2026 owner request).
 - [x] Authenticate peer RPC and directly negotiate reservations with receiving worker; **no elected leader** involved.
 - [x] Route requests through local ingress and stream responses directly from accepted workers.
 - [x] Implement churn handling for a peer joining/leaving/restarting, stale capacity records, and firewall/NAT failure diagnostics.
 - [x] Test one-peer, two-peer, three-peer, and partitioned groups, including intentional leader/seed outages.
 
 [Runtime/security](docs/idle-herd/phase-2.md) and [exact evidence](docs/idle-herd/implementation-status.md).
-Static private-IP seeds and persisted authenticated exchange are implemented; optional
-mDNS/Tailscale API discovery remains deferred. Native tests use mock backends, not
-real models or Linux/Windows hosts.
+Static private-IP seeds and persisted authenticated exchange remain supported.
+Native Bonjour discovery and automatic LAN trust are implemented; Tailscale API
+discovery remains deferred. Real-multicast tests demonstrate independent 2/3-peer
+formation, authenticated dispatch, restart/survivor behavior and enrollment-only
+discovery. Tests use mock backends on macOS, not real models or Linux/Windows hosts.
 
 **Acceptance:** With two peers, either can dispatch to the other. Shut off either node: survivor still serves its local backend. Bring peer back: it rejoins automatically. With three peers, shut down two: remaining one works. Break the network into 2+1: both sides execute locally.
 

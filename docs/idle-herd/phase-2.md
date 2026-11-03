@@ -1,5 +1,10 @@
 # Phase 2: authenticated peers and direct dispatch
 
+**Current native default:** [Bonjour discovery and automatic LAN trust](bonjour.md)
+connect peers without seeds or manual enrollment. The workflow below remains
+supported with `IDLE_HERD_LAN_AUTO_TRUST=false`; this document records Phase 2's
+original manually configured transport.
+
 Every `idle-herd` process still exposes its own localhost OpenAI/Ollama ingress on
 127.0.0.1:11435 and owns its durable worker ledger. A separate, opt-in TLS listener
 adds enrollment, peer exchange and direct admission/execution. No router, seed,

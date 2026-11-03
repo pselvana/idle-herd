@@ -230,6 +230,8 @@ class PeerIdentity:
         self._replays: OrderedDict[str, int] = OrderedDict()
         self._lock = threading.Lock()
         self._bindings: dict[str, bytes] = {}
+        self.lan_trust = None
+        self._client_contexts: list[ssl.SSLContext] = []
 
     @classmethod
     async def open(cls, data_dir: str | Path, worker_id: str, cluster_id: str) -> PeerIdentity:
@@ -562,7 +564,22 @@ class PeerIdentity:
         context = ssl.create_default_context(cafile=str(self.ca_path))
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.check_hostname = False  # Signed response authenticates the worker, including seeds.
+        if self.lan_trust is not None:
+            self.lan_trust.configure_tls(context)
+        self._client_contexts.append(context)
         return context
+
+    def accepts_peer(self, worker_id: str, cluster_id: str) -> bool:
+        if self.lan_trust is not None:
+            pinned = self.lan_trust.cluster_for(worker_id)
+            if pinned is not None:
+                return cluster_id == pinned
+        return cluster_id == self.cluster_id
+
+    def verify_peer_certificate(self, cert: x509.Certificate) -> str:
+        if self.lan_trust is not None and self.lan_trust.cluster_for(_cert_name(cert)) is not None:
+            return self.lan_trust.verify_certificate(cert)
+        return _check_cert(cert, self.ca, self.cluster_id)
 
     def check_local(self) -> None:
         """Expired/revoked local credentials withdraw peer participation only."""
@@ -618,7 +635,7 @@ class PeerIdentity:
             if len(encoded) > 8192:
                 raise IdentityError("certificate too large")
             cert = x509.load_pem_x509_certificate(_unb64(encoded))
-            worker = _check_cert(cert, self.ca, self.cluster_id)
+            worker = self.verify_peer_certificate(cert)
             if str(cert.serial_number) in self.revoked:
                 raise IdentityError("certificate revoked")
             public = cert.public_key()

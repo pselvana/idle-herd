@@ -1,5 +1,13 @@
 # Security boundary: Phases 1–10 and target design
 
+Native daemons now default to [automatic Bonjour discovery and LAN trust](bonjour.md).
+The LAN authorizes first contact; signed public announcements establish persistent
+device-specific pins, followed by verified TLS and signed/replay-fenced RPC.
+This intentionally replaces mandatory manual enrollment for native LAN mesh
+formation. Set `IDLE_HERD_LAN_AUTO_TRUST=false` to retain enrollment-only authority
+boundaries. Model sharing and loopback owner credentials keep their separate scopes.
+Existing identity domains/ledgers and optional admin membership are not merged.
+
 The table below is the target threat model. Phase 1 `idle-herd` binds ingress to
 127.0.0.1, rejects non-loopback clients, unexpected Host and browser Origin/cross-site
 requests, and validates worker-issued one-use reservation capabilities. Its state

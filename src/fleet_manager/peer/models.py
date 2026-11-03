@@ -57,7 +57,14 @@ class PeerSettings(BaseSettings):
             raise ValueError("sensor_helper must be an absolute executable path")
         return self
 
-    # Peer transport is opt-in and uses an explicitly allocated, separate port.
+    # Native daemons discover LAN peers by default. Restricted deployments can
+    # disable automatic trust independently of Bonjour or disable both entirely.
+    mdns_enabled: bool = True
+    lan_auto_trust: bool = True
+    mdns_service_type: str = Field(
+        default="_idle-herd._tcp.local.", pattern=r"^_[a-z][a-z0-9-]{0,13}\._tcp\.local\.$"
+    )
+    # An unset endpoint uses an OS-assigned peer port, outside the backend map.
     peer_endpoint: str | None = None
     seeds: list[str] = Field(default_factory=list, max_length=128)
     peer_interval: float = Field(default=5, ge=0.1, le=300)

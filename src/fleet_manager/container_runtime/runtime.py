@@ -241,7 +241,14 @@ async def run():
     policy = os.environ.get("IDLE_HERD_BACKGROUND_POLICY", "idle_only")
     if policy not in {"idle_only", "utilization_only"}:
         raise ValueError("IDLE_HERD_BACKGROUND_POLICY must be idle_only or utilization_only")
-    settings = PeerSettings(backend_url=BACKEND, background_policy=policy)
+    # Docker bridge networks do not reliably carry physical-LAN multicast.
+    # Preserve explicit seeded/enrolled container operation unless opted in.
+    discovery_defaults = {
+        key: False
+        for key in ("mdns_enabled", "lan_auto_trust")
+        if "IDLE_HERD_" + key.upper() not in os.environ
+    }
+    settings = PeerSettings(backend_url=BACKEND, background_policy=policy, **discovery_defaults)
     gateway, relay = Proxy(NATIVE, gateway=True), Proxy(origin, gateway=False)
     servers = [
         uvicorn.Server(

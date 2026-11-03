@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import json
 import logging
@@ -149,6 +150,7 @@ class PeerDirectory:
         self._peers: dict[str, _Peer] = {}
         self._persist_lock = asyncio.Lock()
         self.changed = asyncio.Event()
+        self._wake = asyncio.Event()
         self.participating = None
         self._owns_client = client is None
         self.client = client or httpx.AsyncClient(
@@ -222,9 +224,43 @@ class PeerDirectory:
             raise ValueError("local descriptor identity mismatch")
         return descriptor
 
+    def _accepted(self, peer: PeerDescriptor, local: PeerDescriptor) -> bool:
+        accepts = getattr(self.identity, "accepts_peer", None)
+        return (
+            accepts(peer.worker_id, peer.cluster_id)
+            if accepts is not None
+            else peer.cluster_id == local.cluster_id
+        )
+
+    async def discovered(self, endpoint: str, worker_id: str) -> None:
+        """A verified Bonjour identity supplies a candidate, never live capacity."""
+        endpoint = validate_endpoint(endpoint)
+        if worker_id == self.identity.worker_id:
+            return
+        old = self._peers.get(endpoint)
+        if old is not None and old.worker_id not in {None, worker_id}:
+            raise ValueError("endpoint identity conflict")
+        # Automatically allocated ports can change after a restart. Replace the
+        # pinned worker's previous endpoint instead of exhausting the directory.
+        for previous, peer in list(self._peers.items()):
+            if peer.worker_id == worker_id and previous != endpoint:
+                del self._peers[previous]
+        if endpoint not in self._peers and len(self._peers) >= MAX_PEERS:
+            raise ValueError("peer directory is full")
+        self._remember(endpoint, worker_id)
+        self._wake.set()
+        await self._persist()
+
+    async def _merge_revocations(self, statements):
+        if getattr(self.identity, "lan_trust", None) is not None:
+            # Each authority still owns its own revocations. Bonjour federation
+            # does not confer authority over another worker's credential domain.
+            statements = [s for s in statements if s.cluster_id == self.identity.cluster_id]
+        await self.identity.merge_revocations(statements)
+
     def _referrals(self, peers: list[PeerDescriptor], local: PeerDescriptor) -> None:
         for peer in peers:
-            if peer.cluster_id == local.cluster_id and peer.worker_id != local.worker_id:
+            if self._accepted(peer, local) and peer.worker_id != local.worker_id:
                 # A referral can initiate a direct verification, never make a peer fresh.
                 self._remember(peer.endpoint)
 
@@ -233,7 +269,7 @@ class PeerDirectory:
     ):
         if (
             descriptor.worker_id != authenticated_worker_id
-            or descriptor.cluster_id != local.cluster_id
+            or not self._accepted(descriptor, local)
             or descriptor.worker_id == local.worker_id
             or descriptor.endpoint == self.endpoint
         ):
@@ -259,12 +295,12 @@ class PeerDirectory:
         local = await self._local()
         if (
             payload.sender.worker_id != authenticated_worker_id
-            or payload.sender.cluster_id != local.cluster_id
+            or not self._accepted(payload.sender, local)
             or payload.sender.worker_id == local.worker_id
             or payload.sender.endpoint == self.endpoint
         ):
             raise ValueError("authenticated sender does not match descriptor")
-        await self.identity.merge_revocations(payload.revocations)
+        await self._merge_revocations(payload.revocations)
         self._observe(payload.sender, authenticated_worker_id, local)
         self._referrals(payload.peers, local)
         await self._persist()
@@ -312,7 +348,7 @@ class PeerDirectory:
                 exchange = Exchange.model_validate_json(content)
                 if exchange.sender.endpoint != peer.endpoint:
                     raise ValueError("peer endpoint does not match contacted endpoint")
-                await self.identity.merge_revocations(exchange.revocations)
+                await self._merge_revocations(exchange.revocations)
                 self._observe(exchange.sender, signer, local)
                 self._referrals(exchange.peers, local)
         except (httpx.HTTPError, ValueError, TypeError) as exc:
@@ -364,11 +400,13 @@ class PeerDirectory:
 
     async def run(self) -> None:
         while True:
+            self._wake.clear()
             try:
                 await self.refresh()
             except (OSError, ValueError, httpx.HTTPError) as exc:
                 log.warning("Peer discovery refresh failed: %s", exc)
-            await asyncio.sleep(self.interval)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._wake.wait(), timeout=self.interval)
 
     async def close(self) -> None:
         if self._owns_client:

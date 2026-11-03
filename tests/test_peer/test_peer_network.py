@@ -33,7 +33,7 @@ async def native(tmp_path, role, *args):
             if process.returncode is None:
                 # Two uvicorn listeners share this process; abrupt shutdown also
                 # exercises the outage path without waiting on signal handlers.
-                if role == "peer":
+                if role.endswith("peer"):
                     process.kill()
                 else:
                     process.terminate()
@@ -119,6 +119,91 @@ async def wait_chat(client, peer, model):
             f"{response.text if response else ''}; first failures={failures}; peers={status.text}"
         ) from exc
     return response
+
+
+async def test_bonjour_forms_mesh_without_seeds_or_enrollment_and_reconnects(tmp_path):
+    """Real multicast, independent identities, TLS dispatch, churn and survivor."""
+    import sqlite3
+
+    service_type = f"_ih-{uuid.uuid4().hex[:8]}._tcp.local."
+    paths = [tmp_path / name for name in ("a", "b", "c")]
+    async with (
+        native(tmp_path, "backend", "alpha") as (_, alpha),
+        native(tmp_path, "backend", "beta") as (_, beta),
+        httpx.AsyncClient(timeout=10, trust_env=False) as client,
+        native(tmp_path, "bonjour-peer", paths[0], alpha["url"], service_type) as (a, ai),
+        native(tmp_path, "bonjour-peer", paths[1], beta["url"], service_type) as (_, bi),
+    ):
+
+        async def mesh(url, count):
+            peers = (await client.get(url + "/v1/cluster/peers")).json()["peers"]
+            return len([p for p in peers if p["reachable"]]) == count
+
+        await wait_for(lambda: mesh(ai["url"], 1), timeout=30)
+        await wait_for(lambda: mesh(bi["url"], 1), timeout=30)
+        await wait_chat(client, ai["url"], "beta")
+        await wait_chat(client, bi["url"], "alpha")
+        # Automatic mesh formation must not rewrite either durable ledger domain.
+        clusters = []
+        for path in paths[:2]:
+            with sqlite3.connect(f"file:{path / 'worker.sqlite'}?mode=ro", uri=True) as db:
+                clusters.append(db.execute("SELECT cluster_id FROM identity").fetchone()[0])
+        assert clusters[0] != clusters[1]
+        async with native(tmp_path, "bonjour-peer", paths[2], alpha["url"], service_type) as (
+            _,
+            ci,
+        ):
+            await wait_for(lambda: mesh(ai["url"], 2), timeout=30)
+            await wait_for(lambda: mesh(bi["url"], 2), timeout=30)
+            await wait_for(lambda: mesh(ci["url"], 2), timeout=30)
+            # No first-node authority or discovery seed gates either survivor.
+            a.kill()
+            await a.wait()
+            await wait_chat(client, bi["url"], "alpha")
+            await wait_chat(client, ci["url"], "beta")
+            async with native(tmp_path, "bonjour-peer", paths[0], alpha["url"], service_type) as (
+                _,
+                restarted,
+            ):
+                await wait_for(lambda: mesh(restarted["url"], 2), timeout=30)
+                await wait_for(lambda: mesh(bi["url"], 2), timeout=30)
+                await wait_chat(client, restarted["url"], "beta")
+                # Offline withdraws Bonjour/peer admission but keeps local inference.
+                token = json.loads((paths[0] / "control-credentials.json").read_text())[
+                    "control_token"
+                ]
+                response = await client.put(
+                    restarted["url"] + "/v1/node/mode",
+                    json={"mode": "offline"},
+                    headers={"authorization": "Bearer " + token},
+                )
+                assert response.status_code == 200, response.text
+                await wait_for(lambda: mesh(bi["url"], 1), timeout=15)
+                assert (await chat(client, restarted["url"], "alpha")).status_code == 200
+                response = await client.put(
+                    restarted["url"] + "/v1/node/mode",
+                    json={"mode": "auto"},
+                    headers={"authorization": "Bearer " + token},
+                )
+                assert response.status_code == 200, response.text
+                await wait_for(lambda: mesh(bi["url"], 2), timeout=15)
+
+
+async def test_bonjour_finds_enrolled_peers_with_automatic_trust_disabled(tmp_path):
+    paths = [tmp_path / "strict-a", tmp_path / "strict-b"]
+    await provision(paths)
+    service_type = f"_ih-{uuid.uuid4().hex[:8]}._tcp.local."
+    async with (
+        native(tmp_path, "backend", "alpha") as (_, alpha),
+        native(tmp_path, "backend", "beta") as (_, beta),
+        native(tmp_path, "bonjour-strict-peer", paths[0], alpha["url"], service_type) as (_, a),
+        native(tmp_path, "bonjour-strict-peer", paths[1], beta["url"], service_type) as (_, b),
+        httpx.AsyncClient(timeout=10, trust_env=False) as client,
+    ):
+        await wait_chat(client, a["url"], "beta")
+        await wait_chat(client, b["url"], "alpha")
+        assert not (paths[0] / "peer-identity/lan-peers.json").exists()
+        assert not (paths[1] / "peer-identity/lan-peers.json").exists()
 
 
 async def test_native_two_peers_remote_streaming_and_survivors(tmp_path):

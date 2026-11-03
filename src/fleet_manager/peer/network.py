@@ -468,7 +468,7 @@ class OriginDispatch:
             lease = Lease.model_validate_json(content)
             if (
                 lease.worker_id != peer.worker_id
-                or lease.cluster_id != identity.cluster_id
+                or lease.cluster_id != peer.cluster_id
                 or lease.worker_incarnation != peer.incarnation
                 or lease.model != spec.model
                 or lease.workload != "background"

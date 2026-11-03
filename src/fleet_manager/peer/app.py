@@ -299,6 +299,7 @@ def create_peer_app(
             app.state.directory = None
             app.state.peer_error = None
             app.state.peer_task = None
+            app.state.mdns_error = None
             from fleet_manager.peer.coordination import AdminCoordination
 
             app.state.coordination = AdminCoordination(settings)
@@ -319,6 +320,10 @@ def create_peer_app(
                     identity = await PeerIdentity.open(
                         data_dir, ledger.worker_id, ledger.cluster_id
                     )
+                    if settings.lan_auto_trust:
+                        from fleet_manager.peer.lan_trust import LanTrust
+
+                        identity.lan_trust = await LanTrust.open(identity)
 
                     async def advertised_inventory():
                         try:
@@ -617,6 +622,7 @@ def create_peer_app(
             "worker_id": app.state.ledger.worker_id,
             "discovery": "peer_to_peer" if app.state.directory else "disabled",
             "peer_error": app.state.peer_error,
+            "bonjour_error": app.state.mdns_error,
             "quorum": app.state.coordination.snapshot().quorum,
         }
 

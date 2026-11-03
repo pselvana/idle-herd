@@ -1,8 +1,12 @@
 # Idle-Herd architecture: Phase 10 and target design
 
 **Current runtime:** `idle-herd` combines localhost ingress, local Ollama inventory,
-and durable worker admission in one native process. Phase 2 adds a separately
-configured TLS peer listener, device-specific CA enrollment, signed peer exchange,
+and durable worker admission in one native process. Native Bonjour now allocates
+and advertises a separate TLS peer listener automatically, with signed public
+identity proofs and persistent device-specific LAN trust pins. Independently
+initialized authority domains form an inference mesh without merging ledgers or
+admin membership. Enrollment-only mode and manual endpoints/seeds remain supported.
+See [Bonjour operation and trust](bonjour.md). Phase 2 added CA enrollment, signed peer exchange,
 persisted endpoint reconnection and direct worker admission/streaming. Local
 execution never contacts discovery or a seed. The origin tries its local worker
 before directly negotiating a remote grant; remote capacity is advisory. Existing

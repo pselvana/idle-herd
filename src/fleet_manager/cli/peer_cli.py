@@ -45,6 +45,41 @@ async def offline_worker():
 
 
 async def serve(settings, *, sensor=None, peer_bind_host=None):
+    listener = None
+    automatic_address = settings.mdns_enabled and not settings.peer_endpoint
+    startup_error = None
+    if automatic_address:
+        from fleet_manager.peer.bonjour import automatic_listener
+
+        try:
+            listener, endpoint = await asyncio.to_thread(automatic_listener)
+            settings = settings.model_copy(update={"peer_endpoint": endpoint})
+        except OSError as exc:
+            # Multicast/interface restrictions must never prevent local ingress.
+            startup_error = f"Automatic peer listener unavailable: {type(exc).__name__}"
+    try:
+        await _serve(
+            settings,
+            sensor=sensor,
+            peer_bind_host=peer_bind_host,
+            peer_socket=listener,
+            automatic_address=automatic_address,
+            startup_error=startup_error,
+        )
+    finally:
+        if listener is not None:
+            listener.close()
+
+
+async def _serve(
+    settings,
+    *,
+    sensor=None,
+    peer_bind_host=None,
+    peer_socket=None,
+    automatic_address=False,
+    startup_error=None,
+):
     app = (
         create_peer_app(settings, sensor=sensor)
         if sensor is not None
@@ -52,6 +87,9 @@ async def serve(settings, *, sensor=None, peer_bind_host=None):
     )
     # Own the shared lifespan once. Both listeners stop before durable storage closes.
     async with app.router.lifespan_context(app):
+        app.state.mdns_error = None
+        if startup_error:
+            app.state.peer_error = startup_error
         servers = [
             uvicorn.Server(
                 uvicorn.Config(
@@ -85,8 +123,36 @@ async def serve(settings, *, sensor=None, peer_bind_host=None):
         async def serve_optional_peer(server):
             # Only localhost ingress owns process signal handling/lifetime.
             server.capture_signals = contextlib.nullcontext
+            bonjour = None
+            serving = None
+
+            async def run_listener():
+                try:
+                    if peer_socket:
+                        await server.serve(sockets=[peer_socket])
+                    else:
+                        await server.serve()
+                except SystemExit as exc:
+                    # A SystemExit escaping a child task stops the entire loop
+                    # before the parent can protect localhost ingress.
+                    raise OSError("peer listener could not start") from exc
+
             try:
-                await server.serve()
+                serving = asyncio.create_task(run_listener())
+                while not getattr(server, "started", False) and not serving.done():
+                    await asyncio.wait({serving}, timeout=0.01)
+                if not serving.done() and settings.mdns_enabled:
+                    from zeroconf import Error as ZeroconfError
+
+                    from fleet_manager.peer.bonjour import BonjourPeers
+
+                    bonjour = BonjourPeers(app, settings, automatic_address=automatic_address)
+                    try:
+                        await bonjour.start()
+                        app.state.bonjour = bonjour
+                    except (OSError, ValueError, ZeroconfError) as exc:
+                        app.state.mdns_error = type(exc).__name__
+                await serving
                 if not servers[0].should_exit:
                     raise OSError("peer listener exited")
             except (OSError, SystemExit) as exc:
@@ -95,6 +161,12 @@ async def serve(settings, *, sensor=None, peer_bind_host=None):
                 peer_task = getattr(app.state, "peer_task", None)
                 if peer_task:
                     peer_task.cancel()
+            finally:
+                if bonjour is not None:
+                    await bonjour.close()
+                if serving is not None and not serving.done():
+                    server.should_exit = True
+                    await serving
 
         local_task = asyncio.create_task(servers[0].serve())
         tasks = [local_task]
@@ -113,10 +185,11 @@ async def serve(settings, *, sensor=None, peer_bind_host=None):
 
 @cli.callback(invoke_without_command=True)
 def run(ctx: typer.Context):
-    """Run localhost APIs; optionally enable a separate authenticated TLS peer listener.
+    """Run localhost APIs and discover/connect LAN peers automatically via Bonjour.
 
-    Configure IDLE_HERD_PEER_ENDPOINT and IDLE_HERD_SEEDS (JSON array).
-    Peer ports are explicitly allocated; existing backend ports are unchanged.
+    Set IDLE_HERD_MDNS_ENABLED=false to disable automatic LAN discovery.
+    Set IDLE_HERD_LAN_AUTO_TRUST=false to require manually enrolled peers.
+    Explicit IDLE_HERD_PEER_ENDPOINT and IDLE_HERD_SEEDS remain supported.
     """
     if ctx.invoked_subcommand is None:
         asyncio.run(serve(PeerSettings()))

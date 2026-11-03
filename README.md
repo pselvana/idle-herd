@@ -2,8 +2,9 @@
 
 This is a native-first peer-to-peer fork of **Ollama Herd**, currently at **Phase 10**.
 `uv run idle-herd` starts single-node localhost ingress and durable worker-owned
-slot reservations in one process. Opt-in authenticated peer discovery and direct
-streaming need no leader or live seed; optional admin Raft is disabled by default. It uses a
+slot reservations in one process. Native daemons automatically discover and trust
+LAN peers through Bonjour/mDNS, then connect over authenticated TLS. Direct
+streaming needs no leader or live seed; optional admin Raft is disabled by default. It uses a
 separately running local Ollama on port 11434; ingress stays on port 11435.
 Install this checkout with `uv sync --extra dev` first. Legacy `herd` and `herd-node`
 remain available; run one ingress on port 11435 at a time.
@@ -43,6 +44,15 @@ uv run idle-herd
 
 Keep this terminal open. Local ingress listens at `http://127.0.0.1:11435`;
 point OpenAI-compatible clients at `http://127.0.0.1:11435/v1`.
+
+Run the same command on another machine on your LAN to form a peer mesh. Nodes
+advertise `_idle-herd._tcp.local.`, choose a free peer port automatically, and
+remember identities across restarts. No seed IPs or enrollment commands are
+required. Newly discovered Idle-Herd devices on the LAN are trusted by default;
+worker idle policy and model-sharing permissions still apply. Set
+`IDLE_HERD_LAN_AUTO_TRUST=false` to require enrolled identities, or
+`IDLE_HERD_MDNS_ENABLED=false` to disable Bonjour. See
+[automatic LAN discovery](docs/idle-herd/bonjour.md) for configuration and limits.
 
 ### 4. Build and open the macOS menu bar app
 
