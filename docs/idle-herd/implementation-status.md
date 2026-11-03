@@ -1,5 +1,28 @@
 # Idle-Herd implementation status
 
+## Menu bar policy for work while active — November 3, 2026
+
+The existing menu bar offers **Preferences… → Background policy → Always
+(subject to resource limits) → Save daemon policy**. That authenticated owner
+preference is persisted and applies immediately in Auto mode. Found and corrected
+an unconditional peer-only active-owner veto that contradicted the menu choice:
+active owners now block only effective `idle_only` work. Explicit `always` and
+low-utilization policies honor the owner's choice for peer reservations,
+consumption and capacity. Caller-tightened idle-only requirements, unknown-activity
+restrictions for idle-only work, quiet hours and resource safeguards still apply.
+No preference was changed on the live daemon and no UI source change was needed.
+Older daemons require one update/restart to use the fix.
+
+Verification: `.venv/bin/pytest tests/test_peer/test_policy.py
+tests/test_peer/test_policy_rpc.py tests/test_local_control/test_modes.py
+tests/test_local_control/test_api.py tests/test_local_control/test_diagnostics.py
+-q --tb=short` — **78 passed in 2.50s**. Regression saves Always through the same
+authenticated/versioned owner API as the menu bar, grants a background peer lease
+while host activity is active and executes through the fenced backend. Additional
+cases retain idle-only tightening, quiet hours, critical pressure and existing mode
+and quota controls. Ruff lint/format and `git diff --check` passed. No live daemon
+restart, GUI automation or real model execution was performed.
+
 ## Backend-managed memory admission — November 3, 2026
 
 Corrected the memory policy after the owner's observation that macOS can reclaim

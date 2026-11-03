@@ -111,6 +111,32 @@ async def test_power_and_optional_unknowns():
     assert (await policy(sensor, require_ac=True).decision("background")).reason == "ac_required"
 
 
+@pytest.mark.parametrize("configured", ["always", "utilization_only"])
+async def test_active_owner_permits_explicit_background_policy_but_respects_idle_only(configured):
+    rule = policy(MutableSensor(idle_seconds=0), background_policy=configured)
+    assert (await rule.decision("background", peer=True)).eligible
+    await rule.require("background", peer=True)
+    with pytest.raises(AdmissionError, match="owner_active"):
+        await rule.require("background", idle_only=True, peer=True)
+
+
+async def test_always_still_respects_quiet_hours_and_resource_safeguards_while_owner_active():
+    sensor = MutableSensor(idle_seconds=0)
+    rule = policy(
+        sensor,
+        background_policy="always",
+        quiet_hours_enabled=True,
+        quiet_hours_start_minute=0,
+        quiet_hours_end_minute=0,
+    )
+    with pytest.raises(AdmissionError, match="quiet_hours"):
+        await rule.require("background", peer=True)
+    rule.settings.quiet_hours_enabled = False
+    sensor.fields["memory_pressure"] = "critical"
+    with pytest.raises(AdmissionError, match="memory_pressure"):
+        await rule.require("background", peer=True)
+
+
 @pytest.mark.parametrize("mode", ["manual", "never"])
 async def test_caller_cannot_override_owner_policy(mode):
     rule = policy(interactive_policy=mode, background_policy=mode)
@@ -387,7 +413,8 @@ async def test_quiet_hours_and_owner_activity_recheck_peer_only(tmp_path):
     sensor = MutableSensor()
     async with ledger_for(tmp_path, sensor, slots=2, interactive_policy="always") as ledger:
         lease = await ledger.acquire(
-            AcquireRequest(model="tiny", request_id="peer/a/one"), peer=True
+            AcquireRequest(model="tiny", request_id="peer/a/one", workload="background"),
+            peer=True,
         )
         sensor.fields["idle_seconds"] = 0
         with pytest.raises(AdmissionError, match="owner_active"):
@@ -439,17 +466,17 @@ async def test_peer_capacity_reports_owner_activity_quiet_hours_and_zero_quota(t
     sensor = MutableSensor(idle_seconds=0)
     async with ledger_for(tmp_path, sensor, interactive_policy="always") as ledger:
         local = await ledger.capacity("tiny:latest")
-        peer = await ledger.capacity("tiny:latest", peer=True)
+        peer = await ledger.capacity("tiny:latest", "background", peer=True)
         assert local.eligible and peer.reason == "owner_active"
         assert peer.observed_available_slots == 0 and not peer.eligibility.eligible
         sensor.fields["idle_seconds"] = 1000
         ledger.settings.quiet_hours_enabled = True
         ledger.settings.quiet_hours_start_minute = ledger.settings.quiet_hours_end_minute = 0
-        peer = await ledger.capacity("tiny:latest", peer=True)
+        peer = await ledger.capacity("tiny:latest", "background", peer=True)
         assert peer.reason == "quiet_hours" and peer.observed_available_slots == 0
         ledger.settings.quiet_hours_enabled = False
         ledger.settings.peer_max_concurrent = 0
-        peer = await ledger.capacity("tiny:latest", peer=True)
+        peer = await ledger.capacity("tiny:latest", "background", peer=True)
         assert peer.reason == "peer_quota" and peer.observed_available_slots == 0
 
 

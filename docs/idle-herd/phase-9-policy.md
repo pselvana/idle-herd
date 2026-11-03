@@ -9,10 +9,21 @@ unknown AC cannot satisfy AC-only. No ungrounded power estimate is used.
 in the worker host's current local timezone. Start is inclusive, end exclusive;
 intervals can cross midnight, and equal endpoints mean all day. Clock and timezone
 changes take effect on the next admission. Local inference is unaffected. A
-fresh sensor observation showing owner activity also blocks peer-origin admission
-and consumption, regardless of optimistic configured policy. Unknown activity
-never grants `idle_only`; explicit `always` and `utilization_only` retain their
-existing treatment of unknown activity.
+fresh sensor observation showing owner activity blocks peer-origin admission
+and consumption when the effective policy is `idle_only`. Explicit `always`
+permits work while the owner is active, subject to other safeguards;
+`utilization_only` permits active-owner work when utilization is low. Requests
+that explicitly require idle-only work still require known idle activity.
+Unknown activity never grants `idle_only` work.
+
+In the macOS menu bar, open **Preferences… → Background policy**, select
+**Always (subject to resource limits)**, and click **Save daemon policy**. Keep
+the main participation mode set to **Auto**. Repeat on each node that should
+accept peer work while its owner is using it. Saved policy applies immediately
+and persists across restart. Quiet hours, power/resource safeguards and peer
+concurrency limits remain independent controls. Older daemons with the unconditional
+active-owner veto must be updated and restarted once; no menu bar rebuild is
+needed for this daemon-side correction.
 
 `peer_max_concurrent` limits each authenticated originating peer separately,
 from zero to 128 (default 128). Reserved, running and quarantined leases count.

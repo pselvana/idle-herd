@@ -169,7 +169,9 @@ class IdlePolicy:
 
     def _peer_decision(self, decision: EligibilityDecision) -> EligibilityDecision:
         reason = None
-        if decision.activity == "active":
+        # Explicit owner policies (Always / low utilization) permit active use.
+        # Caller-tightened idle-only requirements still resolve to idle_only.
+        if decision.policy == "idle_only" and decision.activity == "active":
             reason = "owner_active"
         elif self.settings.quiet_hours_enabled:
             local = datetime.now().astimezone()

@@ -78,6 +78,53 @@ async def rpc(client, origin, path, payload):
     return await client.post(path, content=body, headers=origin.sign_request("POST", path, body))
 
 
+async def test_menu_bar_policy_update_allows_peer_execution_while_owner_is_active(
+    tmp_path, monkeypatch
+):
+    async with policy_worker(tmp_path / "worker", monkeypatch) as (
+        app,
+        sensor,
+        executions,
+        origin,
+        client,
+    ):
+        sensor.idle_seconds = 0
+        payload = {"model": "tiny", "request_id": "active-owner", "workload": "interactive"}
+        denied = await rpc(client, origin, "/peer/v1/acquire", payload)
+        assert denied.status_code == 503
+        # The menu bar saves through this authenticated, versioned owner API.
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://127.0.0.1:11435",
+            headers={"Authorization": "Bearer " + app.state.control_credentials.control_token},
+        ) as owner:
+            preferences = (await owner.get("/v1/node/preferences")).json()
+            updated = await owner.patch(
+                "/v1/node/preferences",
+                json={
+                    "expected_version": preferences["version"],
+                    "values": {"background_policy": "always"},
+                },
+            )
+            assert updated.status_code == 200, updated.text
+            assert updated.json()["values"]["background_policy"] == "always"
+        grant = await rpc(client, origin, "/peer/v1/acquire", payload)
+        assert grant.status_code == 200, grant.text
+        assert grant.json()["workload"] == "background"
+        result = await rpc(
+            client,
+            origin,
+            "/peer/v1/execute",
+            {
+                "path": "/api/generate",
+                "token": grant.json()["token"],
+                "payload": {"model": "tiny", "prompt": "hi", "stream": False},
+            },
+        )
+        assert result.status_code == 200, result.text
+        assert executions == ["/api/generate"]
+
+
 @pytest.mark.parametrize("activity", ["active", "unknown"])
 async def test_peer_cannot_claim_interactive_to_bypass_live_owner_policy(
     tmp_path, monkeypatch, activity

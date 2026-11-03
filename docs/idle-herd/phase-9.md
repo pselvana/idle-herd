@@ -89,7 +89,9 @@ In PowerShell pass the same JSON as one quoted argument (or use the local API).
 The version shown here is illustrative; stale versions return 409. See
 [worker policy details](phase-9-policy.md). Quiet hours follow the host's local
 clock/timezone, including DST changes; equal endpoints block peer work all day.
-Owner activity overrides optimistic peer availability, including policy `always`.
+Owner activity blocks `idle_only` work; explicit `always` permits active-owner
+peer work, and `utilization_only` permits it when system usage is low. Quiet hours
+remain independent of the configured background policy.
 Local interactive inference retains its configured policy. AC-only, battery floor,
 thermal and memory checks remain grounded in host observations. No synthetic watts
 or energy savings are reported. Per-origin concurrency quotas count reserved,
