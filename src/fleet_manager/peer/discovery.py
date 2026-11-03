@@ -24,6 +24,7 @@ from fleet_manager.peer.identity import MAX_REVOCATIONS, RevocationStatement
 log = logging.getLogger(__name__)
 MAX_PEERS = 128
 MAX_BODY = 256 * 1024
+PEER_OBSERVATION_CLOCK_SKEW = 1.0
 EXCHANGE_PATH = "/peer/v1/exchange"
 _NETWORKS = tuple(
     ipaddress.ip_network(net)
@@ -39,6 +40,15 @@ _NETWORKS = tuple(
         "fe80::/10",
     )
 )
+
+
+def peer_observation_is_fresh(observed_at: float, ttl: float) -> bool:
+    """Allow small LAN clock offsets without extending an observation's old-age TTL.
+
+    Cached observations also require a local monotonic receipt-time bound. This
+    tolerance is deliberately smaller than the authenticated RPC clock window.
+    """
+    return -PEER_OBSERVATION_CLOCK_SKEW <= time.time() - observed_at <= ttl
 
 
 def validate_endpoint(value: str) -> str:

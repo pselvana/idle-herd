@@ -32,18 +32,22 @@ class MockOllama:
         self.finish = asyncio.Event()
         self.drop = False
         self.down = False
+        self.loaded = True
+        self.model_size = 1000
 
     async def handle(self, request):
         if self.down:
             raise httpx.ConnectError("backend stopped", request=request)
         if request.url.path in {"/api/tags", "/api/ps"}:
+            if request.url.path == "/api/ps" and not self.loaded:
+                return httpx.Response(200, json={"models": []})
             return httpx.Response(
                 200,
                 json={
                     "models": [
                         {
                             "name": "tiny:latest",
-                            "size": 1000,
+                            "size": self.model_size,
                             "digest": "sha256:test",
                             "context_length": 8192,
                             "details": {"format": "gguf"},
@@ -149,6 +153,34 @@ async def test_embedding_routes_fenced(tmp_path, monkeypatch, path, body, key):
         assert key in response.json()
         assert (await app.state.ledger.capacity("tiny:latest")).observed_available_slots == 1
         assert len(backend.calls) == 1
+
+
+@pytest.mark.parametrize("mode,expected_status", [("backend", 200), ("strict", 503)])
+async def test_low_available_memory_reaches_ollama_in_backend_mode(
+    tmp_path, monkeypatch, mode, expected_status
+):
+    async with peer(tmp_path, monkeypatch) as (app, client, backend):
+        app.state.ledger.settings.memory_admission_mode = mode
+        backend.loaded = False
+        backend.model_size = 17_987_581_215
+        monkeypatch.setattr(
+            "fleet_manager.peer.backend.psutil.virtual_memory",
+            lambda: SimpleNamespace(total=48e9, available=0.5e9),
+        )
+        response = await client.post(
+            "/api/generate", json={"model": "tiny", "prompt": "hi", "stream": False}
+        )
+        assert response.status_code == expected_status, response.text
+        if mode == "backend":
+            assert "/api/generate" in backend.calls
+            assert response.json()["done"] is True
+            rows = await (await app.state.ledger._db.execute("SELECT state FROM leases")).fetchall()
+            assert [row[0] for row in rows] == ["released"]
+        else:
+            assert "/api/generate" not in backend.calls
+            assert (await app.state.ledger.capacity("tiny:latest")).reason == "insufficient_memory"
+            rows = await (await app.state.ledger._db.execute("SELECT state FROM leases")).fetchall()
+            assert rows == []
 
 
 async def test_inventory_and_capacity_without_any_peer_or_raft(tmp_path, monkeypatch):

@@ -53,7 +53,8 @@ signal, explicitly set `IDLE_HERD_BACKGROUND_POLICY=utilization_only`.
 | `IDLE_HERD_CPU_BUSY_PERCENT` | `25` | CPU utilization at or above which those policies drain. |
 | `IDLE_HERD_CPU_IDLE_PERCENT` | `20` | Maximum CPU utilization for recovery; must not exceed busy threshold. |
 | `IDLE_HERD_GPU_BUSY_PERCENT` | `25` | GPU busy threshold when a measurement is available. |
-| `IDLE_HERD_RESERVE_MEMORY_GB` | `2` | Minimum available memory in decimal GB; also used by resource fit. |
+| `IDLE_HERD_MEMORY_ADMISSION_MODE` | `backend` | Backend-managed model fit; `strict` enforces estimated memory budgets. |
+| `IDLE_HERD_RESERVE_MEMORY_GB` | `2` | Available-memory floor/host reserve, enforced in strict memory mode. |
 | `IDLE_HERD_BATTERY_FLOOR_PERCENT` | `30` | Battery floor when not known to be on AC and battery percentage is available. |
 | `IDLE_HERD_REQUIRE_AC` | `false` | Require a positive AC observation. |
 | `IDLE_HERD_SENSOR_MAX_AGE` | `5` | Maximum observation age in seconds. |
@@ -63,9 +64,11 @@ signal, explicitly set `IDLE_HERD_BACKGROUND_POLICY=utilization_only`.
 A stale observation blocks admission. A failed sensor reports unknown activity
 and resources; unknown activity cannot grant `idle_only`, and missing CPU or
 available memory cannot grant either
-`idle_only` or `utilization_only`. Warning/critical memory pressure, low
-available memory, serious/critical thermal readings and configured power limits
-block admission. Unknown optional thermal, GPU, battery and pressure readings
+`idle_only` or `utilization_only`. Critical memory pressure, serious/critical
+thermal readings and configured power limits block admission. In default `backend`
+memory mode, warning pressure and low available RAM are advisory: Ollama manages
+actual model fit/loading and the OS can reclaim caches. Strict memory mode also
+blocks warning pressure and enforces the host RAM reserve. Unknown optional thermal, GPU, battery and pressure readings
 are not themselves proof of safety; they are reported as unknown. Long sample
 gaps reset the recovery window. These checks are best-effort observations, not
 a guarantee against resource changes immediately after a check.
@@ -102,7 +105,7 @@ Linux memory pressure is an available-memory estimate; temperature-derived
 limits on Linux/Windows use available sensor readings rather than OS-wide thermal
 pressure. Missing GPU/thermal readings remain unknown. A failed entire sensor
 cannot establish resource safeguards: `always` still permits local interactive
-work subject to the independent live backend/model/memory fit check. Operators
+work subject to live backend/model checks and the configured memory mode. Operators
 requiring measured utilization should select `utilization_only` explicitly.
 
 No native service installer or UI is included in this phase. Sensor and policy

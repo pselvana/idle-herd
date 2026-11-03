@@ -38,17 +38,30 @@ or a telemetry sender in this lifecycle.
 | `IDLE_HERD_BACKEND_URL` | `http://127.0.0.1:11434` | Local HTTP Ollama; reject remote addresses, credentials, paths and ingress port 11435 |
 | `IDLE_HERD_SLOTS` | `1` | Shared worker concurrency budget across all models, range 1–128 |
 | `IDLE_HERD_MODEL_SLOTS` | `{}` | JSON model-specific limits, further bounded by the shared budget; names normalize to `:latest` |
-| `IDLE_HERD_WEIGHT_MULTIPLIER` | `1.2` | Cold model disk-weight estimate multiplier, minimum 1 |
-| `IDLE_HERD_REQUEST_MEMORY_GB` | `1` | Positive per-admission KV/runtime allowance |
-| `IDLE_HERD_RESERVE_MEMORY_GB` | `2` | Host memory withheld from admission |
+| `IDLE_HERD_MEMORY_ADMISSION_MODE` | `backend` | Ollama manages actual model fit/loading/eviction. `strict` additionally enforces host RAM estimates. |
+| `IDLE_HERD_WEIGHT_MULTIPLIER` | `1.2` | Cold model disk-weight estimate multiplier, minimum 1; enforced only in strict mode |
+| `IDLE_HERD_REQUEST_MEMORY_GB` | `1` | Estimated per-admission KV/runtime allowance; enforced only in strict mode |
+| `IDLE_HERD_RESERVE_MEMORY_GB` | `2` | Host RAM reserve enforced only in strict mode |
 
-Reservation and consumption both fetch live `/api/tags` and `/api/ps` and read
-host available memory. Missing models, unknown model size and failed inventory
-checks cannot grant work. Loaded weights match name and, when supplied, digest.
-Cold weights plus the request allowance must fit after all ledger budgets. This
-can double-count live usage conservatively. Disk weight plus configured headroom
-is an **estimate**, not proof of GPU/VRAM or arbitrary context fit. Configure limits
-within backend capacity. Phase 1 admits local interactive work; it does not
+Reservation and consumption both fetch live `/api/tags` and `/api/ps`. Missing
+models, unknown model size and failed inventory checks cannot grant work. Loaded
+weights match name and, when supplied, digest. Native workers now default to
+`backend` memory admission: available RAM, model disk size and cold-weight/runtime
+estimates do not veto an otherwise eligible slot. Ollama owns actual allocation,
+model residency, eviction, context/GPU fit and its final acceptance or rejection.
+macOS can reclaim cached pages; a point-in-time RAM estimate is not an allocation
+limit. The default does not add cache/inactive bytes to psutil's available value.
+
+Explicit `strict` mode retains the original serialized memory-budget behavior:
+cold weights plus request allowance and other lease budgets must fit after the
+host reserve, both at reservation and consumption. This can conservatively count
+resident memory twice. Disk size plus headroom remains an **estimate**. Worker
+slot limits, per-model limits, peer quotas, durable fencing and quarantine apply
+in both modes. Critical pressure rejects new work in either mode; warning pressure
+and the minimum-available-memory threshold reject only in strict mode. Observed
+pressure and available memory stay visible in diagnostics. Backend-managed memory
+does not guarantee successful allocation or authorize execution outside a lease.
+Phase 1 originally admitted local interactive work; it did not
 collect human activity or support `idle_only`, background policy, modes or jobs.
 Unknown activity never grants idle-only work.
 
@@ -91,7 +104,7 @@ the full cluster schema are Phase 4 work.
 ## Durable authority and recovery
 
 `worker.sqlite` uses SQLite WAL and `synchronous=FULL`. A serialized transaction
-checks shared/per-model slots and aggregate memory, advances a persistent slot
+checks shared/per-model slots (and aggregate RAM estimates in strict mode), advances a persistent slot
 generation and commits its token before acknowledging. Consumption checks token,
 incarnation, generation, expiry, model, single-use state and live fit, then commits
 `running` **before** backend dispatch. Database failure cannot acknowledge a grant

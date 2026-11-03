@@ -69,6 +69,47 @@ def test_signal_rejects_invalid_values():
 
 
 @pytest.mark.asyncio
+async def test_rapid_identical_counters_retain_recent_cpu_with_original_timestamp(monkeypatch):
+    cpu = namedtuple("CPU", "user idle")
+    counters = iter([cpu(10, 90), cpu(30, 170), cpu(30, 170), cpu(30, 170), cpu(40, 260)])
+    clock = [100.0]
+    sensor = sensors.NativeSensor("other")
+    monkeypatch.setattr(sensor, "_resources", lambda: {"_cpu_times": next(counters)})
+    monkeypatch.setattr(sensors.time, "time", lambda: clock[0])
+    assert (await sensor.sample()).cpu_percent is None
+    clock[0] = 102
+    valid = await sensor.sample()
+    assert valid.cpu_percent == pytest.approx(20)
+    clock[0] = 102.01
+    repeated = await sensor.sample()
+    assert repeated.cpu_percent == pytest.approx(20)
+    assert repeated.observed_at == valid.observed_at == 102
+    # Repeated reads must never refresh old CPU data indefinitely.
+    clock[0] = 104
+    assert (await sensor.sample()).cpu_percent is None
+    clock[0] = 106
+    assert (await sensor.sample()).cpu_percent == pytest.approx(10)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [None, (1, 1)])
+async def test_cpu_probe_failure_or_counter_reset_discards_cached_reading(monkeypatch, invalid):
+    cpu = namedtuple("CPU", "user idle")
+    invalid = cpu(*invalid) if invalid is not None else None
+    counters = iter([cpu(10, 90), cpu(30, 170), invalid, cpu(30, 170)])
+    sensor = sensors.NativeSensor("other")
+    monkeypatch.setattr(sensor, "_resources", lambda: {"_cpu_times": next(counters)})
+    assert (await sensor.sample()).cpu_percent is None
+    assert (await sensor.sample()).cpu_percent == pytest.approx(20)
+    assert (await sensor.sample()).cpu_percent is None
+    recovered = await sensor.sample()
+    if invalid is None:
+        assert recovered.cpu_percent is None  # Missing baseline cannot imply idle.
+    else:
+        assert recovered.cpu_percent is not None  # New counters provide a real delta.
+
+
+@pytest.mark.asyncio
 async def test_helper_rejects_stale_and_missing_activity(monkeypatch):
     values = iter(
         [

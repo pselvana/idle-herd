@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from fleet_manager.peer.discovery import MAX_BODY
+from fleet_manager.peer.discovery import MAX_BODY, peer_observation_is_fresh
 
 log = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ class PeerDiagnostics:
         if (
             item.worker_incarnation != incarnation
             or not 0 <= time.monotonic() - received <= self.ttl
-            or not 0 <= time.time() - item.observed_at <= self.ttl
+            or not peer_observation_is_fresh(item.observed_at, self.ttl)
         ):
             return None
         return item
@@ -165,7 +165,7 @@ class PeerDiagnostics:
                 or result.worker_incarnation != descriptor.incarnation
             ):
                 raise ValueError("diagnostic response binding mismatch")
-            if not 0 <= time.time() - result.observed_at <= self.ttl:
+            if not peer_observation_is_fresh(result.observed_at, self.ttl):
                 raise ValueError("diagnostic response stale")
             if await self.app.state.ledger.cluster_participating():
                 self._cache[descriptor.worker_id] = (time.monotonic(), result)

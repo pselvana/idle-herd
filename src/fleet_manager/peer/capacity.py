@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from fleet_manager.models.request import normalize_model_name
-from fleet_manager.peer.discovery import MAX_BODY
+from fleet_manager.peer.discovery import MAX_BODY, peer_observation_is_fresh
 from fleet_manager.peer.models import Capacity, EligibilityDecision, Workload
 
 
@@ -139,8 +139,8 @@ async def cluster_capacity(
     stale, offline = int(not local_fresh), 0
     for status in statuses:
         result = remote.get(status.endpoint)
-        valid = (
-            isinstance(result, Capacity) and 0 <= time.time() - result.observed_at <= directory.ttl
+        valid = isinstance(result, Capacity) and peer_observation_is_fresh(
+            result.observed_at, directory.ttl
         )
         if valid:
             available += result.observed_available_slots if result.eligible else 0

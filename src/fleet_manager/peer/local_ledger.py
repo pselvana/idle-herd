@@ -400,7 +400,10 @@ class LocalLedger:
                 or sum(item.model == spec.model for item in occupied) >= model_limit
             ):
                 raise AdmissionError("busy", 429)
-            if sum(item.memory_gb for item in occupied) + fit.required_gb > fit.available_gb:
+            if (
+                self.settings.memory_admission_mode == "strict"
+                and sum(item.memory_gb for item in occupied) + fit.required_gb > fit.available_gb
+            ):
                 raise AdmissionError("insufficient_memory", 503)
             # Sample after backend probes, immediately before the durable grant.
             await self.policy.require(spec.workload, spec.idle_only, peer=peer)
@@ -478,10 +481,12 @@ class LocalLedger:
             occupied = await self._occupied()
             if lease.peer_origin:
                 self._check_peer_quota(lease.request_id, occupied, existing=True)
-            # Recheck live resources and retain every reservation's budget.
+            # Retain estimates for diagnostics; only strict mode treats them as
+            # a RAM budget. Backend mode lets Ollama reclaim/evict resident data.
             required = max(lease.memory_gb, fit.required_gb)
-            if sum(item.memory_gb for item in occupied) - lease.memory_gb + required > (
-                fit.available_gb
+            if self.settings.memory_admission_mode == "strict" and (
+                sum(item.memory_gb for item in occupied) - lease.memory_gb + required
+                > fit.available_gb
             ):
                 raise AdmissionError("insufficient_memory", 503)
             additional = (
@@ -555,8 +560,13 @@ class LocalLedger:
                 reason = exc.reason
             try:
                 fit = await self.fit_check(model)
-                remaining_gb = fit.available_gb - sum(item.memory_gb for item in occupied)
-                memory_slots = max(0, int(remaining_gb / fit.required_gb))
+                if self.settings.memory_admission_mode == "strict":
+                    remaining_gb = fit.available_gb - sum(item.memory_gb for item in occupied)
+                    memory_slots = max(0, int(remaining_gb / fit.required_gb))
+                    if memory_slots == 0:
+                        reason = reason or "insufficient_memory"
+                else:
+                    memory_slots = self.settings.slots
             except AdmissionError as exc:
                 reason, memory_slots = exc.reason, 0
             decision = await self.policy.decision(workload, idle_only, peer=peer)

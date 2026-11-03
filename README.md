@@ -45,6 +45,11 @@ uv run idle-herd
 Keep this terminal open. Local ingress listens at `http://127.0.0.1:11435`;
 point OpenAI-compatible clients at `http://127.0.0.1:11435/v1`.
 
+Ollama manages model memory/loading/eviction by default; cached macOS memory and
+conservative model-size estimates do not prevent a request from reaching it.
+Worker concurrency limits and critical memory-pressure protection still apply.
+Set `IDLE_HERD_MEMORY_ADMISSION_MODE=strict` to enforce estimated RAM budgets too.
+
 Run the same command on another machine on your LAN to form a peer mesh. Nodes
 advertise `_idle-herd._tcp.local.`, choose a free peer port automatically, and
 remember identities across restarts. No seed IPs or enrollment commands are

@@ -87,8 +87,22 @@ async def test_explicit_headless_utilization_has_truthful_unknown_activity():
     ],
 )
 async def test_safeguards_reject_new_work(fields, reason):
-    decision = await policy(MutableSensor(**fields)).decision("background")
+    decision = await policy(MutableSensor(**fields), memory_admission_mode="strict").decision(
+        "background"
+    )
     assert not decision.eligible and decision.reason == reason
+
+
+@pytest.mark.parametrize("workload", ["interactive", "background"])
+async def test_backend_memory_mode_allows_reclamation_but_rejects_critical_pressure(workload):
+    sensor = MutableSensor(memory_available_gb=0.5, memory_pressure="warning")
+    rule = policy(sensor)
+    decision = await rule.decision(workload)
+    assert decision.eligible
+    assert decision.signal.memory_pressure == "warning"  # Still truthful in diagnostics.
+    sensor.fields["memory_pressure"] = "critical"
+    decision = await rule.decision(workload)
+    assert not decision.eligible and decision.reason == "memory_pressure"
 
 
 async def test_power_and_optional_unknowns():

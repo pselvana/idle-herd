@@ -22,6 +22,9 @@ class PeerSettings(BaseSettings):
     backend_url: str = "http://127.0.0.1:11434"
     slots: int = Field(default=1, ge=1, le=128)
     model_slots: dict[str, int] = Field(default_factory=dict)
+    # Ollama owns model residency, eviction and actual model/context fit. The
+    # optional strict mode additionally enforces our conservative RAM estimates.
+    memory_admission_mode: Literal["backend", "strict"] = "backend"
     # Conservative cold-weight multiplier plus per-admission KV/runtime allowance.
     weight_multiplier: float = Field(default=1.2, ge=1)
     request_memory_gb: float = Field(default=1, gt=0)

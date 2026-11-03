@@ -150,11 +150,23 @@ async def test_fresh_remote_capacity_aggregates():
     assert view.peers[1].fresh and view.busy is False
 
 
+@pytest.mark.parametrize("ahead", [0.15, 0.9])
+@pytest.mark.asyncio
+async def test_small_positive_peer_clock_offset_does_not_hide_capacity(ahead):
+    remote = remote_capacity().model_copy(update={"observed_at": time.time() + ahead})
+    app, client = peer_app(remote)
+    async with client:
+        view = await cluster_capacity(app, "test")
+    assert view.peers[1].fresh
+    assert view.reachable_nodes == 2 and view.observed_available_slots == 1
+
+
 @pytest.mark.parametrize(
     "change",
     [
         {"observed_at": time.time() - 60},
         {"observed_at": time.time() + 60},
+        {"observed_at_offset": 2},
         {"worker_id": "wrong"},
         {"worker_incarnation": "wrong"},
         {"model": "wrong"},
@@ -162,6 +174,8 @@ async def test_fresh_remote_capacity_aggregates():
 )
 @pytest.mark.asyncio
 async def test_stale_future_or_mismatched_remote_is_excluded(change):
+    if "observed_at_offset" in change:
+        change = {"observed_at": time.time() + change["observed_at_offset"]}
     app, client = peer_app(remote_capacity().model_copy(update=change))
     async with client:
         view = await cluster_capacity(app, "test")

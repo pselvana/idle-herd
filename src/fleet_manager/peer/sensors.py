@@ -222,6 +222,7 @@ class NativeSensor:
         self.helper = helper
         self.platform = platform or sys.platform
         self._cpu_times = None
+        self._cpu_reading: tuple[float, float] | None = None
         self._resource_lock = threading.Lock()
         self._pending_resources: asyncio.Task | None = None
         self._lock = asyncio.Lock()
@@ -319,6 +320,8 @@ class NativeSensor:
                         self._pending_resources = None
                     current = resources.pop("_cpu_times", None)
                     previous, self._cpu_times = self._cpu_times, current
+                    reading = self._cpu_reading
+                    self._cpu_reading = None
                     if current is not None and previous is not None:
                         try:
                             total = sum(current) - sum(previous)
@@ -326,9 +329,25 @@ class NativeSensor:
                                 previous.idle + getattr(previous, "iowait", 0)
                             )
                             if total > 0 and 0 <= idle_ticks <= total:
-                                resources["cpu_percent"] = 100 * (total - idle_ticks) / total
+                                self._cpu_reading = (
+                                    100 * (total - idle_ticks) / total,
+                                    observed_at,
+                                )
+                            elif (
+                                total == 0
+                                and idle_ticks == 0
+                                and reading is not None
+                                and 0 <= observed_at - reading[1] <= 1
+                            ):
+                                # Fast status/admission calls can see the same
+                                # OS counters. Retain a real recent measurement
+                                # without presenting it as freshly observed.
+                                self._cpu_reading = reading
                         except (ValueError, TypeError, AttributeError):
                             self._cpu_times = None
+                    if self._cpu_reading is not None:
+                        resources["cpu_percent"], cpu_at = self._cpu_reading
+                        observed_at = min(observed_at, cpu_at)
                     if self.helper is not None:
                         source = "native_helper"
                         idle, locked, helper_at = await _helper_activity(self.helper)
@@ -354,9 +373,11 @@ class NativeSensor:
                         }.get(pressure.strip() if pressure else "", "unknown")
             except TimeoutError:
                 self._cpu_times = None
+                self._cpu_reading = None
                 idle, locked = None, None
             except asyncio.CancelledError:
                 self._cpu_times = None
+                self._cpu_reading = None
                 raise
             return IdleSignal(
                 observed_at=observed_at,

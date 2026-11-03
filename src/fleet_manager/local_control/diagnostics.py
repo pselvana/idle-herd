@@ -21,7 +21,8 @@ _REMEDIES = {
     "gpu_busy": "Wait for GPU load to fall below the configured threshold.",
     "memory_pressure": "Reduce memory use or choose a smaller model; verify the RAM reserve.",
     "insufficient_memory": (
-        "Choose a smaller model or reduce competing memory use; fit is an estimate."
+        "Strict RAM estimates rejected this model. Use backend memory admission "
+        "to let Ollama decide fit, or adjust the strict budget."
     ),
     "thermal_limit": "Allow the host to cool before accepting more work.",
     "ac_required": "Connect AC power or explicitly change the owner's AC-only preference.",
@@ -88,6 +89,17 @@ async def diagnose(app, status: NodeStatus, model: str | None) -> Diagnostics:
                 f"{len(status.backend.models_available)} installed model(s) observed."
             ),
             remedy=None if status.backend.state == "online" else _REMEDIES["backend_unavailable"],
+        ),
+        DiagnosticCheck(
+            code="memory_admission",
+            title="Model memory admission",
+            state="ok",
+            detail=(
+                "Ollama manages model loading/eviction; RAM estimates and warning pressure "
+                "are advisory. Critical OS pressure still blocks new work."
+                if app.state.ledger.settings.memory_admission_mode == "backend"
+                else "Strict RAM estimates and host reserve are enforced before backend execution."
+            ),
         ),
         DiagnosticCheck(
             code="background_policy",

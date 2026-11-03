@@ -18,7 +18,10 @@ async def eligible(model):
 
 @pytest.fixture
 async def ledger(tmp_path):
-    worker = LocalLedger(PeerSettings(data_dir=str(tmp_path)), eligible)
+    # Keep exercising the optional strict RAM budget alongside slot fencing.
+    worker = LocalLedger(
+        PeerSettings(data_dir=str(tmp_path), memory_admission_mode="strict"), eligible
+    )
     await worker.open()
     try:
         yield worker
@@ -28,6 +31,45 @@ async def ledger(tmp_path):
 
 def spec(request_id="request", model="small", **kwargs):
     return AcquireRequest(request_id=request_id, model=model, **kwargs)
+
+
+async def test_capacity_reports_memory_shortfall_with_an_unoccupied_slot(ledger):
+    async def low_memory(model):
+        return ResourceFit(model=model, required_gb=22.6, available_gb=16.3)
+
+    ledger.fit_check = low_memory
+    view = await ledger.capacity("small:latest")
+    assert view.observed_available_slots == 0
+    assert not view.eligible and view.reason == "insufficient_memory"
+    assert view.quarantined_slots == 0
+    with pytest.raises(AdmissionError, match="insufficient_memory"):
+        await ledger.acquire(spec())
+
+
+async def test_default_backend_memory_mode_keeps_slots_fenced_without_enforcing_ram_estimate(
+    tmp_path,
+):
+    async def low_memory(model):
+        return ResourceFit(model=model, required_gb=22.6, available_gb=0)
+
+    worker = LocalLedger(PeerSettings(data_dir=str(tmp_path)), low_memory)
+    await worker.open()
+    try:
+        view = await worker.capacity("small:latest")
+        assert view.eligible and view.observed_available_slots == 1
+        grant = await worker.acquire(spec())
+        assert grant.memory_gb == 22.6
+        with pytest.raises(AdmissionError, match="busy"):
+            await worker.acquire(spec("second"))
+        running = await worker.consume(grant.token, grant.model)
+        assert running.state == "running"
+        await worker.finish(grant.token, stopped=False)
+        view = await worker.capacity(grant.model)
+        assert view.quarantined_slots == 1 and view.observed_available_slots == 0
+        with pytest.raises(AdmissionError, match="busy"):
+            await worker.acquire(spec("after-uncertain-backend"))
+    finally:
+        await worker.close()
 
 
 @pytest.mark.parametrize("slots", [1, 2, 3])
@@ -150,7 +192,9 @@ async def test_second_authority_excluded(ledger):
 
 
 async def test_shared_model_memory_and_model_slot_limits(tmp_path):
-    settings = PeerSettings(data_dir=str(tmp_path), slots=4, model_slots={"small": 1})
+    settings = PeerSettings(
+        data_dir=str(tmp_path), slots=4, model_slots={"small": 1}, memory_admission_mode="strict"
+    )
 
     async def memory_fit(model):
         return ResourceFit(model=model, required_gb=2, available_gb=4)

@@ -1,5 +1,83 @@
 # Idle-Herd implementation status
 
+## Backend-managed memory admission — November 3, 2026
+
+Corrected the memory policy after the owner's observation that macOS can reclaim
+caches and the backend manages model residency. The earlier 24.6 GB figure was
+Idle-Herd's conservative cold-weight/runtime/reserve estimate, not an Ollama
+allocation requirement or proof that this model could not execute. The initial
+recommendation to free that much RAM was too strong.
+
+`IDLE_HERD_MEMORY_ADMISSION_MODE=backend` is now the default. Model-size and
+available-memory estimates remain recorded but do not veto otherwise eligible
+worker reservations, token consumption or capacity observations. Ollama owns
+actual model loading, idle-model eviction, allocation and context/GPU fit; backend
+rejections/failures follow the existing response and quarantine paths. See
+[Ollama's concurrency documentation](https://github.com/ollama/ollama/blob/main/docs/faq.mdx#how-does-ollama-handle-concurrent-requests).
+No cache or inactive bytes are added to psutil's available value: the installed
+macOS psutil implementation already includes free plus inactive memory.
+
+Warning pressure and the minimum-available-memory floor are advisory in default
+backend mode; observed values are still reported honestly. Critical pressure,
+CPU/idle/activity policy, thermals, power, owner modes, peer quotas, concurrency
+limits and persisted worker fencing remain enforced. `strict` memory mode retains
+the original estimated RAM budget, host reserve and warning-pressure veto at
+reservation and consumption. Doctor reports which memory mode is in effect.
+
+Focused regression: sensor/policy-related earlier fixes remain in this working
+change; backend-mode integration tests now reach a mocked Ollama with only 0.5 GB
+reported available, while strict mode rejects before backend execution. A ledger
+regression admits despite a 22.6 GB estimate and zero reported RAM, enforces the
+single slot, and retains quarantine after uncertain backend execution. Critical
+pressure rejects both interactive/background work in either mode.
+
+Verification: focused ledger, policy, ingress, diagnostics and backend transport
+tests — **102 passed in 2.12s**; the cold-model/low-memory integration pair also
+passed separately. Final full native regression — **2339 passed, 8 skipped,
+3 inherited warnings in 126.10s**; `/private/tmp/idle-herd-backend-memory-final-pytest.log`.
+Ruff lint, format checks across source/modified tests (126 files), and
+`git diff --check` passed. No live daemon restart, policy
+override, cache purge or real model execution was performed.
+
+## Live reservation timeout diagnosis — November 3, 2026
+
+Investigated a reported HTTP 504 while reserving `gemma4:26b`. Bonjour and
+authenticated exchange were working between the local worker and
+`pstudio.local` (192.168.68.87). Signed read-only status/capacity requests confirmed
+the peer advertised the model, but admission was not available:
+
+- Initially the local worker had about 18.3 GB available and no occupied leases.
+  The installed model is 17,987,581,215 bytes; default cold admission estimates
+  about 22.6 GB plus the 2 GB host reserve. Subsequent samples also reported
+  memory-pressure warning. Discovery and a longer wait cannot resolve memory fit.
+- The remote worker reported idle human activity, but successive capacity probes
+  alternated missing CPU utilization and idle-recovery hysteresis. Native CPU
+  sampling discarded a recent valid measurement when fast callers observed
+  identical OS counters, repeatedly withdrawing idle-only eligibility.
+- Remote signed observation timestamps were 63–147 ms ahead of local receipt.
+  Strict nonnegative age checks incorrectly hid capacity and cached diagnostics
+  from this connected, authenticated worker.
+
+Corrected zero-delta CPU sampling to retain a real reading for at most one second
+with its original observation timestamp. Missing/invalid/reset counters,
+timeouts, cancellation and expired cached data still fail closed. Remote advisory
+observations now tolerate up to one second of forward clock skew; old-age TTLs,
+identity/incarnation binding, signatures and monotonic cache receipt expiry still
+apply. Larger future timestamps remain excluded. Capacity now explicitly reports
+`insufficient_memory` when the model cannot fit, without changing lease grants,
+fencing, quarantine or memory thresholds.
+
+Verification: focused sensor, policy, RPC, ledger, capacity, diagnostics, discovery
+and owner-control tests — **162 passed in 9.42s**. The socket-dependent native
+control test was excluded from this focused run; no new full-suite claim is made.
+Ruff lint, format checks (26 files) and `git diff --check` passed. Regressions cover
+zero counter deltas, cache age/timestamp retention, missing/reset counters, small
+positive peer skew, rejection of excessive skew, monotonic cache expiration and
+honest empty-slot memory reporting. No real inference was started, no reservation
+was acquired, no policies/resources were loosened, and no live daemon was restarted.
+Both machines need updated code/restart; sufficient RAM and worker eligibility
+remain prerequisites for demonstrating simultaneous execution.
+
 ## Native Bonjour mesh formation — November 3, 2026
 
 Implemented the owner's requested automatic Bonjour discovery and automatic LAN

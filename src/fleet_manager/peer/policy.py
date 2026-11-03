@@ -70,9 +70,13 @@ class IdlePolicy:
         elif not fresh:
             reason = "sensor_stale"
         elif (
-            signal.memory_pressure in {"warning", "critical"}
-            or signal.memory_available_gb is not None
-            and (signal.memory_available_gb < self.settings.reserve_memory_gb)
+            signal.memory_pressure == "critical"
+            or self.settings.memory_admission_mode == "strict"
+            and (
+                signal.memory_pressure == "warning"
+                or signal.memory_available_gb is not None
+                and signal.memory_available_gb < self.settings.reserve_memory_gb
+            )
         ):
             reason = "memory_pressure"
         elif signal.thermal_state in {"serious", "critical"}:

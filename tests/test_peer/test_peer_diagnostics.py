@@ -111,6 +111,14 @@ async def test_cache_binding_expiry_old_peer_and_offline():
         assert cache.cached("peer", "inc") == response
         assert "verified" in calls
         assert cache.cached("peer", "wrong") is None
+        state["item"] = observation(observed_at=time.time() + 0.15)
+        await cache.refresh()
+        assert cache.cached("peer", "inc") == state["item"]
+        cache._cache["peer"] = (time.monotonic() - 11, state["item"])
+        assert cache.cached("peer", "inc") is None
+        state["item"] = observation(observed_at=time.time() + 2)
+        await cache.refresh()
+        assert cache.cached("peer", "inc") is None
         cache._cache["peer"] = (time.monotonic() - 11, response)
         assert cache.cached("peer", "inc") is None
         state["item"] = observation(worker_incarnation="other")
