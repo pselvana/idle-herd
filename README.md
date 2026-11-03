@@ -7,6 +7,92 @@ streaming need no leader or live seed; optional admin Raft is disabled by defaul
 separately running local Ollama on port 11434; ingress stays on port 11435.
 Install this checkout with `uv sync --extra dev` first. Legacy `herd` and `herd-node`
 remain available; run one ingress on port 11435 at a time.
+
+## Run Idle-Herd locally
+
+The daemon requires Python 3.11+, [uv](https://github.com/astral-sh/uv), and a
+separately running local Ollama backend. The optional menu bar app requires
+macOS 13+ and Swift 5.9+. Run the following commands from this checkout's root.
+
+### 1. Install Python dependencies
+
+```sh
+uv sync --extra dev
+```
+
+### 2. Start Ollama and install a model
+
+Start the Ollama app, or run this in a separate terminal:
+
+```sh
+ollama serve
+```
+
+If Ollama is already running, leave it running. It should listen on port 11434.
+Check installed models with `ollama list`. If needed, download a model suitable
+for your hardware with `ollama pull MODEL_NAME`, replacing `MODEL_NAME` with the
+model you want to use.
+
+### 3. Start the daemon
+
+In another terminal, from the repository root:
+
+```sh
+uv run idle-herd
+```
+
+Keep this terminal open. Local ingress listens at `http://127.0.0.1:11435`;
+point OpenAI-compatible clients at `http://127.0.0.1:11435/v1`.
+
+### 4. Build and open the macOS menu bar app
+
+In another terminal, from the repository root:
+
+```sh
+apps/macos/IdleHerdMenuBar/scripts/package.sh
+open apps/macos/IdleHerdMenuBar/build/Idle-Herd.app
+```
+
+The script builds an unsigned local development app. Look for its icon in the
+macOS menu bar, then open **Preferences… → Import daemon control credential…**
+and select `~/.idle-herd/control-credentials.json`. Press **⌘⇧G** in the file
+picker to enter the path. The daemon creates this file on first startup, and the
+app saves the imported credential in Keychain. If you set `IDLE_HERD_DATA_DIR`,
+select the corresponding file in that directory instead.
+
+The app connects to `127.0.0.1:11435`. It does not start or stop the daemon;
+quitting the GUI leaves daemon execution running. Ollama is also managed
+separately. See the [menu bar README](apps/macos/IdleHerdMenuBar/README.md) for
+additional build and test details.
+
+### 5. Check local status
+
+While the daemon is running, use another terminal:
+
+```sh
+uv run idle-herd status
+uv run idle-herd doctor
+```
+
+### Optional: run the daemon as a background user service
+
+Stop the foreground daemon with **Ctrl-C**, then run these commands from the
+repository root to install the user service, start it, and enable login startup:
+
+```sh
+uv run idle-herd service install
+uv run idle-herd service enable
+uv run idle-herd service status
+```
+
+Installation records the current Python environment, working directory and
+effective settings. Reinstall if you move the checkout or Python environment,
+or change those settings. The service does not start Ollama. See the
+[native service instructions](docs/idle-herd/phase-9-services.md) for
+macOS/Linux/Windows behavior and lifecycle verification limits.
+
+## Architecture and implementation status
+
 See [implementation status and verification](docs/idle-herd/implementation-status.md),
 [architecture](docs/idle-herd/architecture.md), [API draft](docs/idle-herd/api.md), and
 [native development/build/test instructions](docs/idle-herd/development.md).
