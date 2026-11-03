@@ -8,6 +8,7 @@ import json
 import uuid
 from contextvars import ContextVar
 
+import anyio
 import httpx
 import psutil
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
@@ -96,12 +97,13 @@ class OllamaBackend:
 
 async def settle(ledger: LocalLedger, token: str, stopped: bool):
     # Do not leave a SQLite state change half-awaited on a client disconnect.
-    task = asyncio.create_task(ledger.finish(token, stopped=stopped))
-    try:
-        await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await task
-        raise
+    with anyio.CancelScope(shield=True):
+        task = asyncio.create_task(ledger.finish(token, stopped=stopped))
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
 
 
 class FencedResponseStream(httpx.AsyncByteStream):
@@ -139,15 +141,19 @@ class FencedResponseStream(httpx.AsyncByteStream):
         if self.closed:
             return
         self.closed = True
-        try:
-            await self.stream.aclose()
-        finally:
-            # An HTTP error is a confirmed rejection only for a complete 4xx.
-            # A 5xx, broken stream, timeout or cancellation is an unknown outcome.
-            stopped = (self.eof and 400 <= self.status < 500) or (
-                200 <= self.status < 300 and (self.saw_done if self.ndjson else self.eof)
-            )
-            await settle(self.ledger, self.token, stopped)
+        # Starlette disconnects use AnyIO level cancellation: each await inside
+        # its cancelled scope is cancelled again. asyncio.shield alone cannot
+        # protect the awaited SQLite cleanup from that repeated cancellation.
+        with anyio.CancelScope(shield=True):
+            try:
+                await self.stream.aclose()
+            finally:
+                # An HTTP error is a confirmed rejection only for a complete 4xx.
+                # A 5xx, broken stream, timeout or cancellation is an unknown outcome.
+                stopped = (self.eof and 400 <= self.status < 500) or (
+                    200 <= self.status < 300 and (self.saw_done if self.ndjson else self.eof)
+                )
+                await settle(self.ledger, self.token, stopped)
 
 
 class AdmissionTransport(httpx.AsyncBaseTransport):

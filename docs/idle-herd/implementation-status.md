@@ -1,5 +1,78 @@
 # Idle-Herd implementation status
 
+## Disconnected stream left a running lease — November 3, 2026
+
+Follow-up investigation of another 504 found an important limitation in the
+earlier capacity-only explanation below: the local running label was not proof
+of backend progress. The local `gemma4:26b` lease created at 14:45:23 remained
+running more than twenty minutes after its translator recorded an incomplete
+stream at 14:45:39. There was no active local curl process using inference ingress
+when inspected. Peer executions continued to succeed, but the abandoned local
+slot reduced useful capacity to the single peer while the old execution outcome
+remained uncertain. The owner confirmed the failed command was run on this Mac.
+
+Reproduced the cleanup failure with separate native daemon/mock-backend processes:
+disconnect after a first streamed chunk, retain independent backend execution,
+and observe that the lease never transitions from running to quarantined. The
+regression failed on the original code (three-second quarantine wait expired)
+and passes with shielded cleanup (**1 passed in 1.31s**). Starlette uses AnyIO
+level cancellation, which repeatedly interrupts awaits inside the cancelled
+scope. The existing asyncio shield followed by an unshielded cleanup await did
+not protect the SQLite transaction from that repeated cancellation.
+
+Added AnyIO cancellation shielding around response close/lease settlement and
+pre-header dispatch-failure settlement. AnyIO is now declared directly (already
+installed transitively, tested version 4.16.0). Unconfirmed execution still becomes
+quarantined, never available; confirmed completion still releases the slot. Added
+a regression for level cancellation before backend headers and the native client
+disconnect case. Focused transport, ingress, ledger and origin-waiter tests:
+**68 passed in 2.57s**. Final full native regression: **2345 passed, 8 skipped,
+3 inherited warnings in 137.97s**;
+`/private/tmp/idle-herd-disconnect-cleanup-pytest.log`. Ruff lint, format checks
+across source/modified tests (122 files) and `git diff --check` passed.
+
+The live lease has not been cleared, no daemon/backend has been stopped, and no
+real inference was started by this investigation. Repairing already uncertain
+execution requires stopping the local daemon and all local backend runners before
+offline reconciliation, per AGENTS.md and Phase 1. A daemon-only restart would
+quarantine the lease without freeing its slot. Recovery is pending explicit owner
+authorization because stopping the backend may cancel work. The prepared repair
+targets only the local daemon/Ollama, preserves identity/journals/preferences,
+drains forwarded work before stopping, performs the documented offline CLI
+reconciliation, then restarts and verifies both worker slots.
+
+## Live second-job timeout evidence — November 3, 2026
+
+Investigated another HTTP 504 report after both nodes were configured Always.
+The live authenticated view confirmed the updated policy, backend-managed memory,
+Auto mode, no quiet hours, normal current pressure and working Bonjour/TLS.
+The local worker held one running `gemma4:26b` lease; its configured limit is one.
+The peer at `pstudio.local` also has one slot and was eligible while its owner
+was active. This investigation found no new policy or dispatch failure.
+
+Correlated durable origin grants with completed peer-execution traces (host-local
+America/Los_Angeles times):
+
+| Peer grant | Completed peer execution | Duration | Capacity timeout during execution |
+| --- | --- | --- | --- |
+| 14:46:54 | 14:47:33 | 38.62 s | 14:47:05 |
+| 14:47:33 | 14:48:06 | 33.24 s | 14:47:47 |
+
+The two most recent timeouts overlapped these peer executions while the local
+slot remained charged. The 10-second reservation deadline therefore expired
+with both configured slots occupied; successful peer execution is recorded for
+both preceding grants. Earlier timeouts predated this healthy state and should
+not be assigned this cause retroactively.
+
+Two fresh public reservation probes succeeded on the remote worker with HTTP 201
+in 0.109 s and 0.168 s, including the exact user request body without an explicit
+request ID. Both diagnostic reservations were released via the public capability
+endpoint (HTTP 200, released). No inference was started by these probes, no active
+lease/quarantine was cleared and no configuration, process or source was changed.
+The worker's running lease is authoritative occupancy, not independent proof of
+backend progress. Further callers can use the existing bounded wait up to
+120000 ms; `--fail-with-body -sS` preserves JSON errors that curl `-f` hides.
+
 ## Menu bar policy for work while active — November 3, 2026
 
 The existing menu bar offers **Preferences… → Background policy → Always

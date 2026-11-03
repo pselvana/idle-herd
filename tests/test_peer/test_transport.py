@@ -4,6 +4,7 @@ import asyncio
 import sqlite3
 
 import aiosqlite
+import anyio
 import httpx
 import pytest
 
@@ -103,6 +104,30 @@ async def test_timeout_after_dispatch_is_quarantined(ledger):
         with pytest.raises(httpx.ReadTimeout):
             await client.post("/api/embed", json={"model": "tiny", "input": "hi"})
     assert (await ledger.capacity("tiny:latest")).quarantined_slots == 1
+
+
+async def test_level_cancellation_before_backend_headers_still_commits_quarantine(ledger):
+    started = asyncio.Event()
+
+    async def backend(request):
+        started.set()
+        await asyncio.Event().wait()
+
+    async with httpx.AsyncClient(
+        transport=AdmissionTransport(ledger, httpx.MockTransport(backend)),
+        base_url="http://localhost",
+    ) as client:
+
+        async def execute():
+            await client.post("/api/chat", json={"model": "tiny"})
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(execute)
+            await asyncio.wait_for(started.wait(), 2)
+            tasks.cancel_scope.cancel()
+    capacity = await ledger.capacity("tiny:latest")
+    assert capacity.quarantined_slots == 1
+    assert capacity.observed_available_slots == 0
 
 
 async def test_cancel_during_admission_rolls_back_and_unblocks_next_client(ledger):

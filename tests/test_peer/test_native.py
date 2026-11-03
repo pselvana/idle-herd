@@ -52,6 +52,37 @@ async def eventually_state(client, backend_url, expected):
             await asyncio.sleep(0.02)
 
 
+async def test_native_client_disconnect_quarantines_without_daemon_restart(tmp_path):
+    async with (
+        httpx.AsyncClient(trust_env=False, timeout=5) as client,
+        native(tmp_path, "backend") as (_, backend_url),
+        native(tmp_path, "peer", tmp_path / "worker", backend_url) as (_, peer_url),
+    ):
+        await client.post(backend_url + "/block")
+        try:
+            async with client.stream(
+                "POST",
+                peer_url + "/api/chat",
+                json={"model": "tiny", "messages": [], "stream": True},
+            ) as response:
+                assert response.status_code == 200
+                async for line in response.aiter_lines():
+                    if "hello" in line:
+                        break
+            # Closing the client must close the worker's accounting stream.
+            # The fabricated backend deliberately survives its HTTP disconnect.
+            async with asyncio.timeout(3):
+                while True:
+                    view = (await client.get(peer_url + "/v1/cluster/capacity?model=tiny")).json()
+                    if view["quarantined_slots"] == 1:
+                        break
+                    await asyncio.sleep(0.02)
+            assert view["observed_available_slots"] == 0
+            assert (await client.get(backend_url + "/state")).json()["active"] == 1
+        finally:
+            await client.post(backend_url + "/finish")
+
+
 async def test_native_single_peer_streaming_embeddings_and_running_crash(tmp_path):
     data = tmp_path / "worker"
     async with httpx.AsyncClient(trust_env=False, timeout=5) as client:
