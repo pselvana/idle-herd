@@ -43,6 +43,15 @@ The menu bar lists inventory and transfers, shows completed/total bytes and fail
 reasons, and provides pause and consent-based copy/retry. Retry requires renewed
 permission and license acceptance. Its daemon remains independently owned.
 
+The macOS copy dialog uses the same light/dark cards and pinned actions as
+Preferences. Select a reachable peer by hostname to fetch its live authorized
+catalog, then select a model to review its size, format, quantization, license and
+provenance. Digests and source identities come from that offer; there are no manual
+SHA or worker-ID inputs. Switching peer/model or refreshing clears consent. Retry
+only offers the original file and manifest revision, including from another peer.
+An empty authorized catalog is distinct from a failed fetch. Start errors stay in
+the dialog so the selection can be reviewed before trying again.
+
 ## Implemented API
 
 All localhost model endpoints use the existing read/control bearer credentials,
@@ -51,7 +60,7 @@ by a control-authorized local registration; paths never cross peer RPC or events
 
 | Endpoint | Scope / body |
 |---|---|
-| `GET /v1/models/inventory` | Read; `{version,scope,models}` with local manifests and live authorized peer offers, labeled `source_worker_id` and `local` |
+| `GET /v1/models/inventory` | Read; `{version,scope,models}` with local manifests and live authorized peer offers, labeled `source_worker_id` and `local`. Optional `source_worker_id` fetches only that reachable peer; failure returns 503 rather than an empty list. |
 | `GET /v1/models/transfers` | Read; `{version,transfers}` with digest, manifest digest, model ID, preferred source, state, completed/total bytes and reason |
 | `POST /v1/models/artifacts` | Control; `LocalArtifact` registration; returns 201 after source content verification |
 | `PUT /v1/models/artifacts/{digest}/permission` | Control; allowlist/share/license update |

@@ -61,6 +61,15 @@ explicit permission and license acceptance; progress updates through snapshots a
 SSE. See [model sharing](../../../docs/idle-herd/phase-7.md). Login launch
 uses macOS Service Management and may require a signed installed app.
 
+**Copy model from peer** opens a light/dark dialog matching Preferences. Choose a
+reachable peer by hostname, refresh its authorized model list, and select an offer
+to review license/provenance and confirm consent. Model digests and peer identities
+are filled internally. Changing the selection or refreshing requires fresh consent;
+retry is limited to the original model revision. Empty catalogs, unreachable peers
+and failed starts have distinct states. Reopen the rebuilt app and update/restart
+the daemon when safe to enable the peer-specific inventory request. Models must
+still be registered and explicitly shared by the source owner.
+
 Preferences opens on demand in a separate window with **General**, **Daemon
 Policy**, **Power & Limits**, and **Security & RPC** tabs. Grouped cards adapt to
 light/dark appearance, while Close, Revert changes, Save Daemon Policy and status

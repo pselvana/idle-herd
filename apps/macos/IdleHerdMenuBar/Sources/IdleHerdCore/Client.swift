@@ -125,8 +125,14 @@ public struct NodeClient {
         let (_, response) = try await session.data(for: request("v1/node/service", method: "PUT", body: body), delegate: Self.noRedirect)
         try check(response)
     }
-    public func inventory() async throws -> [ModelInventoryItem] {
-        let (data, response) = try await session.data(for: request("v1/models/inventory"), delegate: Self.noRedirect)
+    public func inventory(sourceWorkerID: String? = nil) async throws -> [ModelInventoryItem] {
+        var catalogRequest = try request("v1/models/inventory")
+        if let sourceWorkerID {
+            var components = URLComponents(url: catalogRequest.url!, resolvingAgainstBaseURL: false)!
+            components.queryItems = [URLQueryItem(name: "source_worker_id", value: sourceWorkerID)]
+            catalogRequest.url = components.url
+        }
+        let (data, response) = try await session.data(for: catalogRequest, delegate: Self.noRedirect)
         try check(response)
         return try JSONDecoder().decode(ModelInventoryResponse.self, from: data).models
     }
@@ -211,6 +217,7 @@ public struct NodeSnapshot: Decodable {
     public let peers: Peers?
     public let transfers: [ModelTransfer]?
     public let model_inventory: [ModelInventoryItem]?
+    public let peer_details: [ModelPeer]?
     public static func decode(_ object: [String: Any]) throws -> NodeSnapshot {
         let data = try JSONSerialization.data(withJSONObject: object)
         let snapshot = try JSONDecoder().decode(NodeSnapshot.self, from: data)
@@ -223,6 +230,14 @@ public struct NodeSnapshot: Decodable {
 }
 
 public struct ModelInventoryResponse: Decodable { public let models: [ModelInventoryItem] }
+public struct ModelPeer: Decodable, Identifiable {
+    public var id: String { worker_id }
+    public let worker_id: String
+    public let hostname: String?
+    public let local: Bool
+    public let reachable: Bool
+    public var displayName: String { hostname ?? worker_id }
+}
 public struct ModelInventoryItem: Decodable, Identifiable {
     public var id: String { "\(source_worker_id ?? "local"):\(digest)" }
     public let digest: String
@@ -233,8 +248,18 @@ public struct ModelInventoryItem: Decodable, Identifiable {
     public let size_bytes: Int64?
     public let total_bytes: Int64?
     public let format: String?
+    public let backend: String?
+    public let quantization: String?
     public let source_worker_id: String?
     public let local: Bool?
+
+    public func canCopy(from source: String, retrying transfer: ModelTransfer? = nil) -> Bool {
+        guard local == false, source_worker_id == source,
+              digest.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+              manifest_digest?.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { return false }
+        guard let transfer else { return true }
+        return digest == transfer.digest && manifest_digest == transfer.manifest_digest
+    }
 }
 public struct ModelTransferResponse: Decodable { public let transfers: [ModelTransfer] }
 public struct ModelTransfer: Decodable, Identifiable {

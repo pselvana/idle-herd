@@ -14,6 +14,69 @@ from fleet_manager.peer.models import AcquireRequest, AdmissionError, PeerSettin
 
 
 @pytest.mark.asyncio
+async def test_selected_peer_inventory_is_scoped_and_failures_are_not_empty(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fleet_manager.peer.model_transport import ModelInventory
+
+    app = create_peer_app(
+        PeerSettings(data_dir=str(tmp_path / "state")),
+        backend_transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"models": []})),
+    )
+    manifest = ArtifactManifest(
+        model_id="peer-model",
+        digest="a" * 64,
+        size_bytes=100,
+        quantization="Q4",
+        provenance="publisher@revision",
+        license="MIT",
+        required_memory_bytes=1,
+        manifest_digest="0" * 64,
+    )
+    manifest.manifest_digest = manifest.calculated_digest()
+    async with app.router.lifespan_context(app):
+        transport = app.state.model_transport
+        peers = [SimpleNamespace(worker_id=name) for name in ("chosen", "other")]
+        monkeypatch.setattr(transport, "_peers", lambda: peers)
+        rpc = AsyncMock(return_value=ModelInventory(models=[manifest]))
+        monkeypatch.setattr(transport, "_rpc", rpc)
+        monkeypatch.setattr(
+            app.state.model_sharing, "inventory", AsyncMock(side_effect=AssertionError)
+        )
+        read = {"Authorization": "Bearer " + app.state.control_credentials.read_token}
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client:
+            path = "/v1/models/inventory?source_worker_id=chosen"
+            assert (await client.get(path)).status_code == 401
+            rpc.assert_not_awaited()
+            result = await client.get(path, headers=read)
+            assert result.status_code == 200
+            assert result.headers["cache-control"] == "no-store"
+            assert result.json()["models"] == [
+                {**manifest.model_dump(), "source_worker_id": "chosen", "local": False}
+            ]
+            assert rpc.await_count == 1
+            assert rpc.call_args.args[0].worker_id == "chosen"
+            rpc.return_value = ModelInventory(models=[])
+            assert (await client.get(path, headers=read)).json()["models"] == []
+            rpc.side_effect = httpx.ReadError("disconnected")
+            assert (await client.get(path, headers=read)).status_code == 503
+            assert (
+                await client.get("/v1/models/inventory?source_worker_id=unknown", headers=read)
+            ).status_code == 503
+            assert rpc.await_count == 3
+            assert (
+                await client.get("/v1/models/inventory?source_worker_id=", headers=read)
+            ).status_code == 422
+            for mode in ("offline", "paused"):
+                await app.state.ledger.set_mode(ModeUpdate(mode=mode))
+                assert (await client.get(path, headers=read)).status_code == 503
+            assert rpc.await_count == 3
+
+
+@pytest.mark.asyncio
 async def test_owner_permissions_inventory_events_and_peer_isolation(tmp_path):
     app = create_peer_app(
         PeerSettings(data_dir=str(tmp_path / "state")),

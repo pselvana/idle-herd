@@ -110,4 +110,48 @@ final class IdleHerdMenuBarUITests: XCTestCase {
         app.terminate()
     }
 
+    func testPeerModelBrowserAndConsentReset() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-hideJobCount", "NO"]
+        app.launchEnvironment["IDLE_HERD_UI_TESTING"] = "1"
+        app.launchEnvironment["IDLE_HERD_UI_SCENARIO"] = "copy"
+        app.launch()
+        let menu = app.menuBars.statusItems.matching(identifier: "Idle-Herd, 2 local jobs").firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.click()
+        app.disclosureTriangles["Model inventory & transfers"].click()
+        app.scrollViews.firstMatch.swipeUp()
+        app.buttons["Copy model from peer…"].click()
+        let peer = app.popUpButtons["copyPeerPicker"]
+        XCTAssertTrue(peer.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["SHA-256 digest"].exists)
+        XCTAssertFalse(app.buttons["Start copy"].isEnabled)
+        let offer = app.buttons["Select llama3.2:3b"]
+        XCTAssertTrue(offer.waitForExistence(timeout: 5))
+        offer.click()
+        XCTAssertTrue(app.staticTexts["Llama 3.2 Community License"].exists)
+        let sheet = app.sheets.firstMatch
+        sheet.scrollViews.firstMatch.swipeUp()
+        app.checkBoxes["I authorize this copy from the selected peer"].click()
+        app.checkBoxes["I have reviewed and accept the model’s license"].click()
+        XCTAssertTrue(app.buttons["Start copy"].isEnabled)
+        sheet.scrollViews.firstMatch.swipeDown()
+        peer.click()
+        app.menuItems["work-macbook.local"].click()
+        XCTAssertTrue(app.staticTexts["No shared models available"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Start copy"].isEnabled)
+        peer.click()
+        app.menuItems["pstudio.local"].click()
+        XCTAssertTrue(offer.waitForExistence(timeout: 5))
+        offer.click()
+        XCTAssertFalse(app.buttons["Start copy"].isEnabled)
+        sheet.scrollViews.firstMatch.swipeUp()
+        app.checkBoxes["I authorize this copy from the selected peer"].click()
+        app.checkBoxes["I have reviewed and accept the model’s license"].click()
+        app.buttons["Start copy"].click()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: peer)
+        waitForExpectations(timeout: 5)
+        app.terminate()
+    }
+
 }

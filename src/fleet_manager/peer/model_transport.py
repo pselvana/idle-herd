@@ -90,6 +90,20 @@ class ModelTransport:
                 continue
         return inventories
 
+    async def peer_inventory(self, worker_id: str) -> PeerInventory:
+        """Fetch one live authorized catalog, preserving failures for the owner UI."""
+        await self.require_online()
+        peer = next((peer for peer in self._peers() if peer.worker_id == worker_id), None)
+        if peer is None:
+            raise AdmissionError("model_source_unavailable", 503)
+        try:
+            result = await self._rpc(
+                peer, "/peer/v1/models/inventory", InventoryRequest(), ModelInventory
+            )
+        except (httpx.HTTPError, IdentityError, AdmissionError, ValueError) as exc:
+            raise AdmissionError("model_inventory_unavailable", 503) from exc
+        return PeerInventory(worker_id=peer.worker_id, models=result.models)
+
     def _fetchers(self, request: TransferRequest):
         # Every failover source must independently attest to the exact same manifest.
         verified = set()

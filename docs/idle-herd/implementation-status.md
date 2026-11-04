@@ -1,5 +1,45 @@
 # Idle-Herd implementation status
 
+## Peer model browser and copy dialog — November 3, 2026
+
+The macOS copy/retry dialog now matches Preferences with adaptive light/dark cards,
+a peer picker labeled by hostname, a bounded model list, license/provenance details
+and pinned actions. Selecting a reachable peer fetches its authorized catalog;
+manual SHA/manifest/worker-ID inputs are removed. Model selection and refreshed
+offers supply the existing consent-bearing transfer body. Switching peer/model or
+refreshing clears permission/license consent. Retry only accepts the original file
+and manifest digests, including offers from alternative peers. Failed starts remain
+visible in the dialog. Loading, unavailable peer, empty catalog and fetch errors
+have separate presentations.
+
+The authenticated owner inventory endpoint accepts optional `source_worker_id`
+(1–128 characters) to query one reachable enrolled peer using existing signed TLS
+model RPC. Missing/unreachable sources or failed verification return 503; a verified
+empty catalog returns an empty list. Offline/paused modes reject the targeted fetch.
+The unfiltered inventory endpoint, source allowlists, transfer/import validation,
+admission and CLI interfaces retain their existing behavior. Source owners must
+still register and explicitly authorize artifacts; backend-loaded models alone are
+not copy offers. Update/restart the daemon when safe and reopen the rebuilt app.
+
+Verification: **26 Swift package tests passed** and **60 distinct focused Python
+tests passed** across owner controls and model sharing, including two native
+mock-process tests. The broader sandbox run passed 58 checks and failed one native
+control test because loopback bind was denied; that test and native model sharing
+passed with approved socket access. Tests cover authenticated peer-scoped lookup,
+empty/error distinction, unavailable sources, offline/paused behavior, query
+encoding, exclusion of local/other-peer offers and exact-manifest retry selection.
+Ruff lint/format and `git diff --check` passed. Logs are in
+`/private/tmp/idle-herd-copy-{swift,python,native,xcode,package}.log`.
+
+Offscreen renders of the actual SwiftUI view with mock catalogs were inspected in
+light/dark appearance, including selected retry details, empty catalogs, no peers
+and fetch failure. Xcode `build-for-testing` compiles the new peer-selection and
+consent-reset UI test; GUI automation/physical VoiceOver interaction was not run.
+The unsigned app is rebuilt at
+`apps/macos/IdleHerdMenuBar/build/Idle-Herd.app`. Real weights, physical peer copies
+and the full Python suite remain unverified. No running daemon/backend was
+restarted and no release was published.
+
 ## Remote execution and single-host menu icon — November 3, 2026
 
 The right llama now fills gray for this host’s work executing remotely, retains

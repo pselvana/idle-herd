@@ -21,16 +21,25 @@ final class UITestProtocol: URLProtocol {
         Self.lock.lock()
         defer { Self.lock.unlock() }
         let path = request.url?.path ?? ""
+        let scenario = ProcessInfo.processInfo.environment["IDLE_HERD_UI_SCENARIO"] ?? ""
         var code = 200
         var body = "{}"
         if path.hasSuffix("/status") {
             Self.statusRequests += 1
-            let scenario = ProcessInfo.processInfo.environment["IDLE_HERD_UI_SCENARIO"] ?? ""
-            let telemetry = scenario == "telemetry" || scenario.hasPrefix("preferences")
+            let telemetry = scenario == "telemetry" || scenario.hasPrefix("preferences") || scenario.hasPrefix("copy")
             if !telemetry && (2...4).contains(Self.statusRequests) { code = 503 }
             body = """
             {"version":1,"mode":{"mode":"\(Self.mode)","expires_at":\(Self.expiresAt.map { String($0) } ?? "null")},"slots":{"total":4,"occupied":2,"running":2,"reserved":0,"quarantined":0},"idle":{"eligible":false,"reason":"owner_active"},"resources":{"cpu_percent":11.44067798499703,"memory_available_gb":22.748971008,"memory_total_gb":64,"on_ac":true,"battery_percent":100,"thermal_state":"unknown","source":"macos_iokit","observed_at":\(Date().timeIntervalSince1970)},"backend":{"state":"offline","models_loaded":[]},"peers":{"known":0,"reachable":0,"stale":0,"observed_available_slots":0},"jobs":{"queued":0},"waiters":0,"worker_leases":[],"job_history":[],"transfers":[],"model_inventory":[],"peer_details":[{"worker_id":"this-mac","local":true,"reachable":true,"backend":"ollama","platform":"macOS arm64","models":[]}]}
             """
+            if scenario.hasPrefix("copy") {
+                var object = try! JSONSerialization.jsonObject(with: Data(body.utf8)) as! [String: Any]
+                object["peer_details"] = [
+                    ["worker_id": "this-mac", "hostname": "my-mac.local", "local": true, "reachable": true],
+                    ["worker_id": "studio", "hostname": "pstudio.local", "local": false, "reachable": true],
+                    ["worker_id": "book", "hostname": "work-macbook.local", "local": false, "reachable": true],
+                ]
+                body = String(data: try! JSONSerialization.data(withJSONObject: object), encoding: .utf8)!
+            }
         } else if path.hasSuffix("/mode"), request.httpMethod == "PUT" {
             if let data = bodyData(), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let mode = json["mode"] as? String {
                 Self.mode = mode
@@ -56,8 +65,29 @@ final class UITestProtocol: URLProtocol {
             body = "{\"jobs\":[],\"worker_leases\":[]}"
         } else if path.hasSuffix("/inventory") {
             body = "{\"models\":[]}"
+            if scenario.hasPrefix("copy") {
+                let source = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "source_worker_id" }?.value
+                if source == "studio" {
+                    let offer: [String: Any] = [
+                        "digest": String(repeating: "a", count: 64), "manifest_digest": String(repeating: "b", count: 64),
+                        "model_id": "llama3.2:3b", "source_worker_id": "studio", "local": false,
+                        "format": "gguf", "backend": "ollama", "quantization": "Q4_K_M", "size_bytes": 2_000_000_000,
+                        "license": "Llama 3.2 Community License", "provenance": "publisher/llama3.2@revision-123",
+                    ]
+                    body = String(data: try! JSONSerialization.data(withJSONObject: ["models": [offer]]), encoding: .utf8)!
+                } else if source == "book", scenario == "copy-error" { code = 503 }
+            }
         } else if path.hasSuffix("/transfers") {
             body = "{\"transfers\":[]}"
+            if request.httpMethod == "POST", scenario.hasPrefix("copy") {
+                let json = bodyData().flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+                let valid = json?["digest"] as? String == String(repeating: "a", count: 64) &&
+                    json?["manifest_digest"] as? String == String(repeating: "b", count: 64) &&
+                    json?["source_worker_id"] as? String == "studio" &&
+                    json?["permission"] as? Bool == true && json?["license_accepted"] as? Bool == true
+                code = valid && scenario != "copy-rejected" ? 202 : 409
+                body = "{}"
+            }
         } else if path.hasSuffix("/events") {
             code = 503
         }

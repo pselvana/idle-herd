@@ -116,13 +116,11 @@ import IdleHerdCore
             busy = false
         }
     }
-    func startTransfer(digest: String, manifestDigest: String, source: String, licenseAccepted: Bool, retry: Bool) {
+    func startTransfer(digest: String, manifestDigest: String, source: String, licenseAccepted: Bool, retry: Bool) async throws {
         actionError = nil; busy = true
-        Task {
-            do { try await client.startTransfer(digest: digest, manifestDigest: manifestDigest, sourceWorkerID: source, licenseAccepted: licenseAccepted, retry: retry); await refresh() }
-            catch { actionError = error.localizedDescription }
-            busy = false
-        }
+        defer { busy = false }
+        try await client.startTransfer(digest: digest, manifestDigest: manifestDigest, sourceWorkerID: source, licenseAccepted: licenseAccepted, retry: retry)
+        await refresh()
     }
     func cancelJob(_ id: String) {
         actionError = nil
@@ -1151,43 +1149,256 @@ struct PreferencesView: View {
 struct TransferView: View {
     @ObservedObject var model: NodeModel
     @Environment(\.dismiss) var dismiss
-    @State private var digest = ""
-    @State private var manifestDigest = ""
+    @Environment(\.colorScheme) private var colorScheme
     @State private var source = ""
+    @State private var catalog: [ModelInventoryItem] = []
+    @State private var selectedID = ""
     @State private var permission = false
     @State private var license = false
-    private let retry: Bool
+    @State private var loading = false
+    @State private var submitting = false
+    @State private var catalogError: String?
+    @State private var submitError: String?
+    @State private var refreshID = UUID()
+    private let retryTransfer: ModelTransfer?
+    private var retry: Bool { retryTransfer != nil }
+
     init(model: NodeModel, retryTransfer: ModelTransfer? = nil) {
-        self.model = model; self.retry = retryTransfer != nil
-        _digest = State(initialValue: retryTransfer?.digest ?? "")
-        _manifestDigest = State(initialValue: retryTransfer?.manifest_digest ?? "")
+        self.model = model; self.retryTransfer = retryTransfer
         _source = State(initialValue: retryTransfer?.source_worker_id ?? "")
     }
+    private var peers: [ModelPeer] {
+        (model.snapshot?.peer_details ?? []).filter { !$0.local && $0.reachable }
+            .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+    private var sourceAvailable: Bool { peers.contains { $0.id == source } }
+    private var selected: ModelInventoryItem? { catalog.first { $0.id == selectedID } }
+    private var canCopy: Bool {
+        selected != nil && sourceAvailable && permission && license && !loading &&
+            !model.busy && !submitting && model.connected
+    }
+    private var panelBackground: Color {
+        colorScheme == .dark ? Color(red: 0.065, green: 0.07, blue: 0.08) : Color(nsColor: .windowBackgroundColor)
+    }
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color.white.opacity(0.04) : Color.white.opacity(0.7)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(retry ? "Retry model copy" : "Copy model from peer").font(.headline)
-            Text("Choose an advertised model or enter details from a trusted peer. Review the license and provenance before copying.")
-            if !retry { ScrollView { VStack(alignment: .leading) {
-            ForEach(model.inventory) { item in
-                Button("\(item.model_id) · \(item.source_worker_id ?? "source unknown")") {
-                    digest = item.digest; manifestDigest = item.manifest_digest ?? ""; source = item.source_worker_id ?? ""
-                    permission = false; license = false
+        VStack(spacing: 0) {
+            header
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    peerSection
+                    modelsSection
+                    if let selected { detailsSection(selected) }
+                    consentSection
+                }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Divider()
+            footer
+        }
+        .frame(width: 600, height: min(720, max(420, (NSScreen.main?.visibleFrame.height ?? 850) - 90)))
+        .background(panelBackground).tint(.blue)
+        .onAppear { chooseInitialPeer() }
+        .onChange(of: peers.map(\.id)) { _ in chooseInitialPeer() }
+        .task(id: "\(source):\(sourceAvailable):\(refreshID)") { await loadCatalog() }
+    }
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "square.and.arrow.down")
+                .font(.system(size: 21, weight: .light)).foregroundStyle(.blue)
+                .frame(width: 38, height: 38)
+                .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 11))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(retry ? "Retry model copy" : "Copy model from peer")
+                    .font(.system(size: 17, weight: .semibold))
+                Text("Choose a peer, then browse the models it shares with this Mac.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            if loading || submitting { ProgressView().controlSize(.small) }
+        }.padding(24)
+    }
+    private func heading(_ title: String) -> some View {
+        Text(title).font(.system(size: 11, weight: .semibold)).tracking(1)
+            .foregroundStyle(.secondary)
+    }
+    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12, content: content)
+            .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+            .background(cardBackground, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.08)))
+    }
+    private var peerSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            heading("SOURCE PEER")
+            card {
+                HStack(spacing: 12) {
+                    Image(systemName: "desktopcomputer").foregroundStyle(.blue)
+                    Picker("Peer", selection: Binding(get: { source }, set: {
+                        source = $0; clearSelection(); catalog = []; catalogError = nil
+                    })) {
+                        Text("Select a peer…").tag("")
+                        if !source.isEmpty && !sourceAvailable {
+                            Text("Previous peer · unavailable").tag(source)
+                        }
+                        ForEach(peers) { peer in Text(peer.displayName).tag(peer.id) }
+                    }.accessibilityIdentifier("copyPeerPicker")
+                        .disabled(peers.isEmpty || submitting)
                 }
-                Text("License: \(item.license ?? "unknown") · Provenance: \(item.provenance ?? "unknown")").font(.caption).textSelection(.enabled)
+                Text(peers.isEmpty ? "No reachable peers. Connect a trusted peer to browse its shared models." : "Only models authorized for this Mac are available to copy.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            } }.frame(maxHeight: 150) }
-            TextField("SHA-256 digest", text: $digest).disabled(retry)
-            TextField("Manifest SHA-256 digest", text: $manifestDigest).disabled(retry)
-            TextField("Source worker ID", text: $source)
-            Toggle("I authorize this copy from the selected peer", isOn: $permission)
-            Toggle("I have reviewed and accept the model's license", isOn: $license)
+        }
+    }
+    private var modelsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Button("Cancel") { dismiss() }
-                Button(retry ? "Retry copy" : "Start copy") {
-                    model.startTransfer(digest: digest.trimmingCharacters(in: .whitespacesAndNewlines), manifestDigest: manifestDigest.trimmingCharacters(in: .whitespacesAndNewlines), source: source.trimmingCharacters(in: .whitespacesAndNewlines), licenseAccepted: license, retry: retry)
-                    dismiss()
-                }.disabled(!permission || !license || digest.isEmpty || manifestDigest.isEmpty || source.isEmpty || model.busy || !model.connected)
+                heading("AVAILABLE MODELS")
+                Spacer()
+                Button { clearSelection(); catalog = []; refreshID = UUID() } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }.buttonStyle(.borderless).font(.system(size: 12))
+                    .disabled(!sourceAvailable || loading || submitting || !model.connected)
+                    .accessibilityIdentifier("refreshPeerModels")
             }
-        }.padding().frame(width: 440)
+            card {
+                if !model.connected {
+                    notice("Daemon unavailable", detail: "Reconnect to browse models.", icon: "exclamationmark.triangle")
+                } else if !sourceAvailable {
+                    notice("Select a reachable peer", detail: "Its shared models will appear here.", icon: "network")
+                } else if loading {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("Fetching models from peer…").font(.system(size: 13))
+                    }.padding(.vertical, 12)
+                } else if let catalogError {
+                    notice("Couldn’t load models", detail: catalogError, icon: "exclamationmark.triangle")
+                } else if catalog.isEmpty {
+                    notice(retry ? "Original model unavailable" : "No shared models available",
+                           detail: retry ? "Choose another peer or ask the source owner to share the original model revision again." : "The peer has no models authorized for this Mac. Ask its owner to register a model and grant sharing permission.",
+                           icon: "shippingbox")
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 4) {
+                            ForEach(catalog) { item in
+                                Button {
+                                    clearSelection(); selectedID = item.id
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: selectedID == item.id ? "checkmark.circle.fill" : "circle")
+                                            .foregroundStyle(selectedID == item.id ? Color.blue : Color.secondary)
+                                        VStack(alignment: .leading, spacing: 5) {
+                                            Text(item.model_id).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
+                                            Text(modelSummary(item)).font(.system(size: 11)).foregroundStyle(.secondary)
+                                        }
+                                        Spacer(minLength: 0)
+                                    }.padding(10).contentShape(Rectangle())
+                                        .background(selectedID == item.id ? Color.blue.opacity(0.09) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                                }.buttonStyle(.plain).disabled(submitting)
+                                    .accessibilityLabel("Select \(item.model_id)")
+                                    .accessibilityValue(selectedID == item.id ? "Selected" : "Not selected")
+                            }
+                        }
+                    }.frame(height: min(210, CGFloat(catalog.count) * 60))
+                }
+            }
+        }
+    }
+    private func notice(_ title: String, detail: String, icon: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon).foregroundStyle(.secondary).font(.system(size: 20))
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).font(.system(size: 13, weight: .medium))
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }.padding(.vertical, 8)
+    }
+    private func modelSummary(_ item: ModelInventoryItem) -> String {
+        [item.format?.uppercased(), item.backend?.capitalized, item.quantization,
+         item.size_bytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+    private func detailsSection(_ item: ModelInventoryItem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            heading("MODEL DETAILS")
+            card {
+                detail("License", value: item.license ?? "Not provided")
+                Divider()
+                detail("Provenance", value: item.provenance ?? "Not provided")
+            }.textSelection(.enabled)
+        }
+    }
+    private func detail(_ title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(value).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+    private var consentSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            heading("PERMISSION & LICENSE")
+            card {
+                Toggle("I authorize this copy from the selected peer", isOn: $permission)
+                Divider()
+                Toggle("I have reviewed and accept the model’s license", isOn: $license)
+            }.toggleStyle(.checkbox).font(.system(size: 12))
+                .disabled(selected == nil || loading || submitting || !sourceAvailable || !model.connected)
+        }
+    }
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let submitError {
+                Text(submitError).font(.system(size: 12)).foregroundStyle(.red).textSelection(.enabled)
+                    .accessibilityIdentifier("copyError")
+            }
+            HStack {
+                Text(retry ? "Resume the original model revision." : "The model will be installed on this Mac.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(submitting)
+                Button(retry ? "Retry copy" : "Start copy") {
+                    Task { await startCopy() }
+                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(!canCopy)
+            }
+        }.padding(.horizontal, 24).padding(.vertical, 18)
+    }
+    private func chooseInitialPeer() {
+        if source.isEmpty, let first = peers.first { source = first.id }
+    }
+    private func clearSelection() {
+        selectedID = ""; permission = false; license = false; submitError = nil
+    }
+    private func loadCatalog() async {
+        clearSelection(); catalog = []; catalogError = nil
+        guard !source.isEmpty && sourceAvailable else { loading = false; return }
+        let requestedSource = source
+        loading = true
+        do {
+            let items = try await model.client.inventory(sourceWorkerID: requestedSource)
+            guard !Task.isCancelled, source == requestedSource else { return }
+            catalog = items.filter { $0.canCopy(from: requestedSource, retrying: retryTransfer) }
+                .sorted { $0.model_id.localizedStandardCompare($1.model_id) == .orderedAscending }
+            if retry, let first = catalog.first { selectedID = first.id }
+        } catch {
+            guard !Task.isCancelled, source == requestedSource else { return }
+            catalogError = "Check that the peer is online and sharing is enabled, then refresh. \(error.localizedDescription)"
+        }
+        loading = false
+    }
+    private func startCopy() async {
+        guard canCopy, let selected, let manifestDigest = selected.manifest_digest else { return }
+        submitting = true; submitError = nil
+        defer { submitting = false }
+        do {
+            try await model.startTransfer(digest: selected.digest, manifestDigest: manifestDigest,
+                                          source: source, licenseAccepted: license, retry: retry)
+            dismiss()
+        } catch { submitError = error.localizedDescription }
     }
 }

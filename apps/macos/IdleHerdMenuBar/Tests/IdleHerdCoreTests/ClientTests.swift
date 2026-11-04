@@ -92,4 +92,39 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(transfers.first?.reason, "disk full")
     }
 
+    func testSelectedPeerCatalogUsesAuthenticatedEncodedQuery() async throws {
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.host, "127.0.0.1")
+            XCTAssertEqual(request.url?.path, "/v1/models/inventory")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
+            XCTAssertEqual(components.queryItems, [URLQueryItem(name: "source_worker_id", value: "peer & /?")])
+            return (200, Data("{\"models\":[]}".utf8))
+        }
+        let items = try await client().inventory(sourceWorkerID: "peer & /?")
+        XCTAssertTrue(items.isEmpty)
+        MockProtocol.handler = { _ in (503, Data()) }
+        do { _ = try await client().inventory(sourceWorkerID: "peer"); XCTFail("expected catalog failure") } catch {}
+    }
+
+    func testCopySelectionExcludesLocalOtherPeerAndChangedRetryManifest() throws {
+        let digest = String(repeating: "a", count: 64)
+        let manifest = String(repeating: "b", count: 64)
+        func item(source: String = "peer", local: Bool = false, revision: String? = nil) throws -> ModelInventoryItem {
+            let object: [String: Any] = ["digest": digest, "model_id": "model", "source_worker_id": source,
+                                         "local": local, "manifest_digest": revision ?? manifest]
+            return try JSONDecoder().decode(ModelInventoryItem.self, from: JSONSerialization.data(withJSONObject: object))
+        }
+        let transferObject: [String: Any] = ["digest": digest, "manifest_digest": manifest,
+                                            "state": "paused", "completed_bytes": 10, "total_bytes": 100]
+        let transfer = try JSONDecoder().decode(ModelTransfer.self, from: JSONSerialization.data(withJSONObject: transferObject))
+        XCTAssertTrue(try item().canCopy(from: "peer"))
+        XCTAssertFalse(try item(local: true).canCopy(from: "peer"))
+        XCTAssertFalse(try item(source: "other").canCopy(from: "peer"))
+        XCTAssertFalse(try item(revision: "invalid").canCopy(from: "peer"))
+        XCTAssertTrue(try item().canCopy(from: "peer", retrying: transfer))
+        XCTAssertFalse(try item(revision: String(repeating: "c", count: 64)).canCopy(from: "peer", retrying: transfer))
+        XCTAssertTrue(try item(source: "alternative").canCopy(from: "alternative", retrying: transfer))
+    }
+
 }

@@ -1,6 +1,6 @@
 """Owner-authorized model provisioning; never mounted on the peer listener."""
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from fleet_manager.local_control.auth import authorize
@@ -59,8 +59,21 @@ def create_model_router() -> APIRouter:
     )
 
     @router.get("/inventory")
-    async def inventory(request: Request):
+    async def inventory(
+        request: Request,
+        source_worker_id: str | None = Query(default=None, min_length=1, max_length=128),
+    ):
         state = request.app.state
+        if source_worker_id is not None:
+            peer = await state.model_transport.peer_inventory(source_worker_id)
+            return {
+                "version": 1,
+                "scope": "reachable_peer_view",
+                "models": [
+                    {**item.model_dump(), "source_worker_id": peer.worker_id, "local": False}
+                    for item in peer.models
+                ],
+            }
         local = await state.model_sharing.inventory()
         models = [
             {**item.model_dump(), "source_worker_id": state.ledger.worker_id, "local": True}
