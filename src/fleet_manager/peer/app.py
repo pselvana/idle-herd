@@ -57,14 +57,27 @@ class LocalStreamingProxy(StreamingProxy):
         super().__init__(*args, **kwargs)
         self.ledger = ledger
         self.inner_transport = inner_transport
+        self._admission_transports: dict[str, AdmissionTransport] = {}
+
+    def recovery_deadline(self, reservation_id: str) -> float | None:
+        return next(
+            (
+                deadline
+                for transport in self._admission_transports.values()
+                if (deadline := transport.recovery_deadline(reservation_id)) is not None
+            ),
+            None,
+        )
 
     def _get_client(self, node_id):
         if node_id != self.ledger.worker_id:
             raise ValueError("Worker execution must use its own local backend")
         if node_id not in self._clients:
+            transport = AdmissionTransport(self.ledger, self.inner_transport)
+            self._admission_transports[node_id] = transport
             self._clients[node_id] = httpx.AsyncClient(
                 base_url=self.ledger.settings.backend_url,
-                transport=AdmissionTransport(self.ledger, self.inner_transport),
+                transport=transport,
                 trust_env=False,
                 timeout=httpx.Timeout(600, connect=5),
             )
@@ -248,6 +261,9 @@ def create_peer_app(
             await ledger.open()
             stack.push_async_callback(ledger.close)
             data_dir = str(Path(settings.data_dir).expanduser())
+            from fleet_manager.peer.hosts import local_hostname
+
+            app.state.hostname = await asyncio.to_thread(local_hostname)
             from fleet_manager.local_control.auth import load_or_create_credentials
 
             app.state.control_credentials = await asyncio.to_thread(

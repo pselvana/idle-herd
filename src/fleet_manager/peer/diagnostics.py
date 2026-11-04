@@ -10,9 +10,10 @@ import time
 from typing import Annotated, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from fleet_manager.peer.discovery import MAX_BODY, peer_observation_is_fresh
+from fleet_manager.peer.hosts import hostname_label
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ class PeerObservation(BaseModel):
     version: Literal[1] = 1
     worker_id: str = Field(min_length=1, max_length=128)
     worker_incarnation: str = Field(min_length=1, max_length=128)
+    hostname: str | None = Field(default=None, max_length=253)
     observed_at: float = Field(ge=0)
     platform: str = Field(max_length=128)
     backend: Literal["ollama"] = "ollama"
@@ -66,6 +68,13 @@ class PeerObservation(BaseModel):
     queued_jobs: int = Field(ge=0, le=10000)
     running_jobs: int = Field(ge=0, le=10000)
     replicated_jobs: int = Field(ge=0, le=10000)
+
+    @field_validator("hostname")
+    @classmethod
+    def valid_hostname(cls, value):
+        if value is not None and hostname_label(value) is None:
+            raise ValueError("invalid hostname")
+        return hostname_label(value)
 
 
 async def local_observation(app) -> PeerObservation:
@@ -97,6 +106,7 @@ async def local_observation(app) -> PeerObservation:
     return PeerObservation(
         worker_id=ledger.worker_id,
         worker_incarnation=ledger.incarnation,
+        hostname=getattr(state, "hostname", None),
         observed_at=time.time(),
         platform=f"{platform.system()} {platform.machine()}"[:128],
         models=[m for m in models[:256] if SAFE_NAME.fullmatch(m)],
@@ -143,6 +153,9 @@ class PeerDiagnostics:
             identity = self.app.state.identity
             body = b"{}"
             headers = identity.sign_request("POST", PATH, body)
+            # Older clients keep receiving the original strict status schema.
+            # Older servers ignore this optional header and return no hostname.
+            headers["x-idle-status-hostname"] = "1"
             async with self.app.state.peer_client.stream(
                 "POST", descriptor.endpoint + PATH, content=body, headers=headers, timeout=5
             ) as response:
@@ -168,6 +181,9 @@ class PeerDiagnostics:
             if not peer_observation_is_fresh(result.observed_at, self.ttl):
                 raise ValueError("diagnostic response stale")
             if await self.app.state.ledger.cluster_participating():
+                remember = getattr(self.app.state.directory, "remember_hostname", None)
+                if result.hostname and remember is not None:
+                    await remember(descriptor.worker_id, result.hostname)
                 self._cache[descriptor.worker_id] = (time.monotonic(), result)
 
     async def refresh(self):

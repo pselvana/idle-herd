@@ -19,6 +19,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from fleet_manager.models.request import normalize_model_name
+from fleet_manager.peer.hosts import hostname_label
 from fleet_manager.peer.identity import MAX_REVOCATIONS, RevocationStatement
 
 log = logging.getLogger(__name__)
@@ -124,6 +125,7 @@ class _Peer:
     last_seen: float | None = None
     observed_at: float | None = None
     reason: str = "not yet contacted"
+    hostname: str | None = None
 
 
 class PeerStatus(BaseModel):
@@ -135,6 +137,7 @@ class PeerStatus(BaseModel):
     reachable: bool
     observed_at: float | None
     reason: str | None
+    hostname: str | None = None
 
 
 class PeerDirectory:
@@ -198,13 +201,21 @@ class PeerDirectory:
                 ):
                     raise ValueError("invalid stored worker ID")
                 self._remember(endpoint, worker_id)
+                hostname = row.get("hostname")
+                if hostname is not None:
+                    if hostname_label(hostname) is None:
+                        raise ValueError("invalid stored peer hostname")
+                    peer = self._peers.get(endpoint)
+                    if peer is not None:
+                        peer.hostname = hostname_label(hostname)
         except (OSError, ValueError, TypeError, KeyError) as exc:
             log.warning("Could not load known peer endpoints: %s", exc)
 
     async def _persist(self) -> None:
         async with self._persist_lock:
             rows = [
-                {"endpoint": p.endpoint, "worker_id": p.worker_id} for p in self._peers.values()
+                {"endpoint": p.endpoint, "worker_id": p.worker_id, "hostname": p.hostname}
+                for p in self._peers.values()
             ]
             path = self.path
 
@@ -247,19 +258,42 @@ class PeerDirectory:
         endpoint = validate_endpoint(endpoint)
         if worker_id == self.identity.worker_id:
             return
+        if endpoint == self.endpoint:
+            raise ValueError("discovered peer conflicts with local endpoint")
         old = self._peers.get(endpoint)
         if old is not None and old.worker_id not in {None, worker_id}:
             raise ValueError("endpoint identity conflict")
         # Automatically allocated ports can change after a restart. Replace the
         # pinned worker's previous endpoint instead of exhausting the directory.
+        hostname = self.host_for(worker_id, address_fallback=False)
         for previous, peer in list(self._peers.items()):
             if peer.worker_id == worker_id and previous != endpoint:
                 del self._peers[previous]
         if endpoint not in self._peers and len(self._peers) >= MAX_PEERS:
             raise ValueError("peer directory is full")
         self._remember(endpoint, worker_id)
+        self._peers[endpoint].hostname = hostname
         self._wake.set()
         await self._persist()
+
+    def host_for(self, worker_id: str, *, address_fallback: bool = True) -> str | None:
+        peers = [p for p in self._peers.values() if p.worker_id == worker_id]
+        named = next((p.hostname for p in peers if p.hostname), None)
+        return named or (
+            urlsplit(peers[0].endpoint).hostname if peers and address_fallback else None
+        )
+
+    async def remember_hostname(self, worker_id: str, hostname: str) -> None:
+        name = hostname_label(hostname)
+        if name is None:
+            raise ValueError("invalid authenticated hostname")
+        changed = False
+        for peer in self._peers.values():
+            if peer.worker_id == worker_id and peer.hostname != name:
+                peer.hostname = name
+                changed = True
+        if changed:
+            await self._persist()
 
     async def _merge_revocations(self, statements):
         if getattr(self.identity, "lan_trust", None) is not None:
@@ -387,6 +421,7 @@ class PeerDirectory:
                     reachable=live,
                     observed_at=peer.observed_at,
                     reason=reason,
+                    hostname=peer.hostname,
                 )
             )
         return result

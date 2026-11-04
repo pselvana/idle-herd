@@ -142,6 +142,7 @@ class BackendStatus(Strict):
 
 
 class NodeStatus(Strict):
+    hostname: str | None = Field(default=None, max_length=253)
     version: Literal[1] = 1
     worker_id: str
     mode: ModeState
@@ -186,6 +187,9 @@ class InventorySummary(Strict):
 
 
 class JobSummary(Strict):
+    origin_worker_id: str | None = None
+    origin_host: str | None = Field(default=None, max_length=253)
+    execution_host: str | None = Field(default=None, max_length=253)
     job_id: str
     state: str
     model: str
@@ -200,6 +204,7 @@ class JobSummary(Strict):
 
 
 class PeerDetail(Strict):
+    hostname: str | None = Field(default=None, max_length=253)
     worker_id: str | None
     local: bool = False
     reachable: bool
@@ -238,6 +243,10 @@ class ModelFit(Strict):
 
 
 class WorkerLease(Strict):
+    origin_worker_id: str | None = None
+    origin_host: str | None = Field(default=None, max_length=253)
+    quarantine_recovery: Literal["awaiting_backend", "manual_required"] | None = None
+    quarantine_recovery_deadline: float | None = None
     job_id: str
     state: str
     model: str

@@ -146,6 +146,7 @@ import IdleHerdCore
         return String(max(0, slots.total - slots.occupied))
     }
     func originLocation(_ job: [String: Any]) -> String {
+        if let host = job["execution_host"] as? String { return "worker \(host)" }
         guard let worker = job["worker_id"] as? String else { return "unassigned or unknown" }
         guard let local = status["worker_id"] as? String else { return "location unknown" }
         return worker == local ? "local worker" : "remote worker"
@@ -157,7 +158,7 @@ import IdleHerdCore
     func jobDescription(_ job: [String: Any]) -> String {
         let name = job["model"] as? String ?? "unknown model"
         let state = job["state"] as? String ?? "unknown"
-        let origin = (job["peer_origin"] as? Bool) == true ? "peer origin" : "local origin"
+        let origin = StatusPresentation.jobOrigin(job)
         let elapsed = (job["created_at"] as? Double).map { "\(max(0, Int(Date().timeIntervalSince1970 - $0)))s" } ?? "unknown"
         return "\(name) · \(state) · \(origin) · \(elapsed)"
     }
@@ -284,7 +285,12 @@ struct ContentView: View {
             }
             if let error = model.jobsError { Text(error).font(.caption).foregroundStyle(.orange) }
             ForEach(Array(model.jobs.prefix(5).enumerated()), id: \.offset) { _, job in
-                Text(model.jobDescription(job)).font(.caption).lineLimit(2)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(model.jobDescription(job)).font(.caption).lineLimit(2)
+                    if let recovery = StatusPresentation.quarantineRecovery(job) {
+                        Text(recovery).font(.caption2).foregroundStyle(.orange)
+                    }
+                }
             }
             DisclosureGroup("Origin journal") {
                 if model.originJobs.isEmpty {
@@ -336,7 +342,7 @@ struct ContentView: View {
             row("Unoccupied slots", "\(model.availableSlots) of \(model.value("slots", "total"))")
                 .help("Unoccupied slots describe local lease occupancy. Admission also checks policy, quarantine, backend and model resources.")
             if let quarantined = model.snapshot?.slots.quarantined, quarantined > 0 {
-                Label("\(quarantined) quarantined slot(s) need reconciliation", systemImage: "exclamationmark.triangle")
+                Label("\(quarantined) quarantined slot(s) · see job recovery status", systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
             }
             Text("\(model.presentation.sensorSource) · \(model.telemetryAge)")
@@ -360,7 +366,7 @@ struct ContentView: View {
                 DisclosureGroup("Device details") {
                     ForEach(Array(peers.enumerated()), id: \.offset) { _, peer in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text((peer["local"] as? Bool) == true ? "This Mac · Local" : "\(peer["worker_id"] as? String ?? "Peer") · \((peer["reachable"] as? Bool) == true ? "Reachable" : "Unreachable")")
+                            Text((peer["local"] as? Bool) == true ? "This Mac · \(peer["hostname"] as? String ?? "Local")" : "\(peer["hostname"] as? String ?? peer["worker_id"] as? String ?? "Peer") · \((peer["reachable"] as? Bool) == true ? "Reachable" : "Unreachable")")
                                 .font(.caption.bold())
                             Text("\(StatusPresentation.label(peer["platform"] as? String)) · \(StatusPresentation.label(peer["backend"] as? String))")
                             Text("Models: \((peer["models"] as? [String]).map { $0.isEmpty ? "None advertised" : $0.joined(separator: ", ") } ?? "Not reported")")

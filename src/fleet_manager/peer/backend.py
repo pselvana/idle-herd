@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
+import time
 import uuid
 from contextvars import ContextVar
 
@@ -32,6 +34,7 @@ class RequestBinding(BaseModel):
 
 
 binding: ContextVar[RequestBinding | None] = ContextVar("peer_request", default=None)
+logger = logging.getLogger(__name__)
 
 
 class BackendModel(BaseModel):
@@ -107,7 +110,18 @@ async def settle(ledger: LocalLedger, token: str, stopped: bool):
 
 
 class FencedResponseStream(httpx.AsyncByteStream):
-    def __init__(self, stream, ledger, token, *, ndjson: bool, status: int):
+    def __init__(
+        self,
+        stream,
+        ledger,
+        token,
+        *,
+        ndjson: bool,
+        status: int,
+        reservation_id: str = "",
+        drain_seconds: float = 0,
+        on_finished=None,
+    ):
         self.stream = stream
         self.ledger = ledger
         self.token = token
@@ -117,25 +131,101 @@ class FencedResponseStream(httpx.AsyncByteStream):
         self.saw_done = False
         self.eof = False
         self.closed = False
+        self.reservation_id = reservation_id
+        self.drain_seconds = drain_seconds
+        self.recovery_deadline: float | None = None
+        self._iterator = None
+        self._read_task = None
+        self._drainer = None
+        self._read_failed = False
+        self._finished = False
+        self._on_finished = on_finished
 
     def _line(self, line: bytes):
         # Invalid/truncated wire data never confirms execution stopped.
         with contextlib.suppress(ValueError, AttributeError):
             self.saw_done |= json.loads(line).get("done") is True
 
+    def _chunk(self, chunk):
+        if self.ndjson:
+            # Keep only parser state, never accumulate detached output.
+            self.pending += chunk
+            lines = self.pending.split(b"\n")
+            self.pending = lines.pop()[-65536:]
+            for line in lines:
+                self._line(line)
+
+    async def _next(self):
+        if self._iterator is None:
+            self._iterator = self.stream.__aiter__()
+        if self._read_task is None:
+            # A client cancellation must not cancel the original backend read:
+            # the same response may still provide authoritative completion.
+            self._read_task = asyncio.create_task(anext(self._iterator))
+        try:
+            chunk = await asyncio.shield(self._read_task)
+        except StopAsyncIteration:
+            self._read_task = None
+            if self.pending:
+                self._line(self.pending)
+            self.eof = True
+            raise
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._read_task = None
+            self._read_failed = True
+            raise
+        self._read_task = None
+        self._chunk(chunk)
+        return chunk
+
     async def __aiter__(self):
-        async for chunk in self.stream:
-            if self.ndjson:
-                # Bound the parser independently from untrusted model output.
-                self.pending += chunk
-                lines = self.pending.split(b"\n")
-                self.pending = lines.pop()[-65536:]
-                for line in lines:
-                    self._line(line)
-            yield chunk
-        if self.pending:
-            self._line(self.pending)
-        self.eof = True
+        while True:
+            try:
+                yield await self._next()
+            except StopAsyncIteration:
+                return
+
+    def _confirmed(self):
+        return (self.eof and 400 <= self.status < 500) or (
+            200 <= self.status < 300 and (self.saw_done if self.ndjson else self.eof)
+        )
+
+    async def _close_stream(self):
+        if self._finished:
+            return
+        self._finished = True
+        try:
+            if self._read_task is not None:
+                self._read_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await self._read_task
+                self._read_task = None
+            await self.stream.aclose()
+        finally:
+            self.recovery_deadline = None
+            if self._on_finished:
+                self._on_finished(self)
+
+    async def _recover(self):
+        try:
+            async with asyncio.timeout(self.drain_seconds):
+                while not self.eof and not self._confirmed():
+                    try:
+                        await self._next()
+                    except StopAsyncIteration:
+                        break
+            if self._confirmed():
+                await self.ledger.confirm_backend_completion(self.token)
+        except (TimeoutError, asyncio.CancelledError):
+            # No completion proof: quarantine remains charged.
+            pass
+        except Exception as exc:
+            logger.warning("Backend completion recovery unavailable: %s", type(exc).__name__)
+        finally:
+            with anyio.CancelScope(shield=True):
+                await self._close_stream()
 
     async def aclose(self):
         if self.closed:
@@ -145,15 +235,31 @@ class FencedResponseStream(httpx.AsyncByteStream):
         # its cancelled scope is cancelled again. asyncio.shield alone cannot
         # protect the awaited SQLite cleanup from that repeated cancellation.
         with anyio.CancelScope(shield=True):
-            try:
-                await self.stream.aclose()
-            finally:
-                # An HTTP error is a confirmed rejection only for a complete 4xx.
-                # A 5xx, broken stream, timeout or cancellation is an unknown outcome.
-                stopped = (self.eof and 400 <= self.status < 500) or (
-                    200 <= self.status < 300 and (self.saw_done if self.ndjson else self.eof)
-                )
-                await settle(self.ledger, self.token, stopped)
+            stopped = self._confirmed()
+            await settle(self.ledger, self.token, stopped)
+            if (
+                not stopped
+                and not self.eof
+                and not self._read_failed
+                and 200 <= self.status < 300
+                and self.drain_seconds > 0
+            ):
+                self.recovery_deadline = time.time() + self.drain_seconds
+                self._drainer = asyncio.create_task(self._recover())
+            else:
+                await self._close_stream()
+
+    async def shutdown(self):
+        """End daemon-owned readers before closing the worker ledger."""
+        with anyio.CancelScope(shield=True):
+            if self._drainer is not None:
+                self._drainer.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._drainer
+            if not self.closed:
+                self.closed = True
+                await settle(self.ledger, self.token, self._confirmed())
+            await self._close_stream()
 
 
 class AdmissionTransport(httpx.AsyncBaseTransport):
@@ -162,6 +268,13 @@ class AdmissionTransport(httpx.AsyncBaseTransport):
     def __init__(self, ledger: LocalLedger, inner: httpx.AsyncBaseTransport | None = None):
         self.ledger = ledger
         self.inner = inner or httpx.AsyncHTTPTransport(retries=0)
+        self._streams: set[FencedResponseStream] = set()
+
+    def recovery_deadline(self, reservation_id: str) -> float | None:
+        return next(
+            (s.recovery_deadline for s in self._streams if s.reservation_id == reservation_id),
+            None,
+        )
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if request.method != "POST" or request.url.path not in {
@@ -187,7 +300,7 @@ class AdmissionTransport(httpx.AsyncBaseTransport):
                     )
                 )
                 token = lease.token
-            await self.ledger.consume(
+            consumed = await self.ledger.consume(
                 token, model, workload=current.workload, idle_only=current.idle_only
             )
         except AdmissionError as exc:
@@ -203,18 +316,24 @@ class AdmissionTransport(httpx.AsyncBaseTransport):
             raise
         # Rebuild the response so even an eagerly buffered inner transport must
         # traverse and close our accounting stream rather than cached content.
+        stream = FencedResponseStream(
+            response.stream,
+            self.ledger,
+            token,
+            ndjson=request.url.path in {"/api/chat", "/api/generate"},
+            status=response.status_code,
+            reservation_id=consumed.reservation_id,
+            drain_seconds=self.ledger.settings.quarantine_drain_seconds,
+            on_finished=self._streams.discard,
+        )
+        self._streams.add(stream)
         return httpx.Response(
             response.status_code,
             headers=response.headers,
             extensions=response.extensions,
-            stream=FencedResponseStream(
-                response.stream,
-                self.ledger,
-                token,
-                ndjson=request.url.path in {"/api/chat", "/api/generate"},
-                status=response.status_code,
-            ),
+            stream=stream,
         )
 
     async def aclose(self):
+        await asyncio.gather(*(s.shutdown() for s in list(self._streams)))
         await self.inner.aclose()

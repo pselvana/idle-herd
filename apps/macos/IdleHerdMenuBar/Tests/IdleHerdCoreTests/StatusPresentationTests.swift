@@ -2,6 +2,26 @@ import XCTest
 @testable import IdleHerdCore
 
 final class StatusPresentationTests: XCTestCase {
+    func testJobOriginsUseHostnamesAndHonestOlderDaemonFallbacks() {
+        XCTAssertEqual(StatusPresentation.jobOrigin(["peer_origin": true, "origin_host": "pstudio.local"]), "From pstudio.local")
+        XCTAssertEqual(StatusPresentation.jobOrigin(["peer_origin": false, "origin_host": "my-mac.local"]), "From my-mac.local")
+        XCTAssertEqual(StatusPresentation.jobOrigin(["peer_origin": true, "origin_worker_id": "abcdef123456"]), "From peer abcdef12")
+        XCTAssertEqual(StatusPresentation.jobOrigin(["peer_origin": true]), "From unknown peer")
+        XCTAssertEqual(StatusPresentation.jobOrigin([:]), "From this Mac")
+    }
+
+    func testQuarantineTextDistinguishesConfirmationWindowFromUnknownOutcome() {
+        let now = Date(timeIntervalSince1970: 100)
+        XCTAssertEqual(StatusPresentation.quarantineRecovery([
+            "state": "quarantined", "quarantine_recovery": "awaiting_backend",
+            "quarantine_recovery_deadline": 115.0,
+        ], now: now), "Waiting for backend completion · up to 15s")
+        XCTAssertEqual(StatusPresentation.quarantineRecovery([
+            "state": "quarantined", "quarantine_recovery": "awaiting_backend",
+            "quarantine_recovery_deadline": 99.0,
+        ], now: now), "Backend outcome unknown · stopped-backend recovery required")
+        XCTAssertNil(StatusPresentation.quarantineRecovery(["state": "running"]))
+    }
     func snapshot(_ fields: [String: Any] = [:]) throws -> NodeSnapshot {
         var data: [String: Any] = [
             "version": 1, "mode": ["mode": "auto"],

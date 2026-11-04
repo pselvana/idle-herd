@@ -191,6 +191,32 @@ async def test_second_authority_excluded(ledger):
     assert (await ledger.acquire(spec())).worker_id == ledger.worker_id
 
 
+async def test_late_backend_proof_cannot_release_an_old_incarnation_or_reused_slot(tmp_path):
+    settings = PeerSettings(data_dir=str(tmp_path))
+    worker = LocalLedger(settings, eligible)
+    await worker.open()
+    try:
+        first = await worker.acquire(spec("first"))
+        await worker.consume(first.token, first.model)
+        await worker.finish(first.token, stopped=False)
+        await worker.confirm_backend_completion(first.token)
+        second = await worker.acquire(spec("second"))
+        with pytest.raises(AdmissionError, match="stale_generation"):
+            await worker.confirm_backend_completion(first.token)
+        await worker.consume(second.token, second.model)
+    finally:
+        await worker.close()
+    restarted = LocalLedger(settings, eligible)
+    await restarted.open()
+    try:
+        with pytest.raises(AdmissionError, match="stale_incarnation"):
+            await restarted.confirm_backend_completion(second.token)
+        view = await restarted.capacity("small:latest")
+        assert view.quarantined_slots == 1 and view.observed_available_slots == 0
+    finally:
+        await restarted.close()
+
+
 async def test_shared_model_memory_and_model_slot_limits(tmp_path):
     settings = PeerSettings(
         data_dir=str(tmp_path), slots=4, model_slots={"small": 1}, memory_admission_mode="strict"

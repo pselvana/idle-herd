@@ -38,6 +38,7 @@ or a telemetry sender in this lifecycle.
 | `IDLE_HERD_BACKEND_URL` | `http://127.0.0.1:11434` | Local HTTP Ollama; reject remote addresses, credentials, paths and ingress port 11435 |
 | `IDLE_HERD_SLOTS` | `1` | Shared worker concurrency budget across all models, range 1–128 |
 | `IDLE_HERD_MODEL_SLOTS` | `{}` | JSON model-specific limits, further bounded by the shared budget; names normalize to `:latest` |
+| `IDLE_HERD_QUARANTINE_DRAIN_SECONDS` | `30` | Keep reading an interrupted original backend response for completion proof, range 0–120 seconds; 0 disables. Timeout never releases uncertain work. |
 | `IDLE_HERD_MEMORY_ADMISSION_MODE` | `backend` | Ollama manages actual model fit/loading/eviction. `strict` additionally enforces host RAM estimates. |
 | `IDLE_HERD_WEIGHT_MULTIPLIER` | `1.2` | Cold model disk-weight estimate multiplier, minimum 1; enforced only in strict mode |
 | `IDLE_HERD_REQUEST_MEMORY_GB` | `1` | Estimated per-admission KV/runtime allowance; enforced only in strict mode |
@@ -128,7 +129,18 @@ charge remains quarantined. An empty `/api/ps`, failed probe or lease expiry
 cannot prove a request stopped; Ollama provides no authoritative request-specific
 reconciliation API here.
 
-To reclaim quarantine, stop `idle-herd` and **all Ollama/backend runner processes**,
+After a client disconnect, a still-readable successful backend response is retained
+for up to `IDLE_HERD_QUARANTINE_DRAIN_SECONDS`. Its output is discarded. If the
+original response supplies completion proof during this window, the worker
+automatically releases the quarantined slot using the original token, incarnation
+and slot generation. It neither starts another backend request nor replays work.
+A terminal `done: true` record suffices even if the socket stays open; synchronous
+responses require their complete body. Deadline expiry, incomplete output or a
+lost backend connection preserves quarantine. Daemon shutdown stops the detached
+readers before closing the ledger; restart-orphaned work has no original response
+to reconcile automatically.
+
+To reclaim quarantine without original-response proof, stop `idle-herd` and **all Ollama/backend runner processes**,
 including independently supervised runners. Confirm they are stopped, then use
 the same data directory:
 

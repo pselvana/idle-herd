@@ -43,7 +43,7 @@ function apply(data, id) {
   const c = data.coordination;
   show('coordination', 'Admin consensus: ' + c.state + ' · Leader: ' + val(c.leader) + ' · Quorum: ' + val(c.quorum) +
     '\nInference is independent of admin consensus. Reachability does not prove a network partition.');
-  table('peers', data.peer_details.map(p => [p.local ? 'This worker' : (p.worker_id || 'Unverified endpoint'),
+  table('peers', data.peer_details.map(p => [p.hostname || (p.local ? 'This worker' : (p.worker_id || 'Unverified endpoint')),
     p.reachable ? 'reachable' : 'unreachable / stale', p.platform, p.backend,
     p.models.join(', ') || 'none observed', stamp(p.observed_at),
     p.slots ? p.slots.running + ' running · ' + p.slots.reserved + ' reserved · ' +
@@ -57,7 +57,10 @@ function apply(data, id) {
     j.effective_durability || 'not accepted', j.durable_copies, j.attempt_count,
     j.possible_duplicates ? 'allowed' : 'not authorized', stamp(j.updated_at)]));
   table('leases', data.worker_leases.map(j => [j.lease_id || j.job_id, j.request_id_hash,
-    j.worker_incarnation, j.slot_generation, j.model, j.state, j.peer_origin ? 'peer' : 'local']));
+    j.worker_incarnation, j.slot_generation, j.model, j.state,
+    j.origin_host || j.origin_worker_id || (j.peer_origin ? 'unknown peer' : 'this worker'),
+    j.quarantine_recovery === 'awaiting_backend' ? 'Waiting for confirmed backend completion' :
+      j.state === 'quarantined' ? 'Unknown outcome; stopped-backend recovery required' : '—']));
   table('transfers', data.transfers.map(t => [t.model_id, t.state,
     t.completed_bytes + ' / ' + t.total_bytes + ' bytes', t.reason || '—']));
   const selected = el('model').value;

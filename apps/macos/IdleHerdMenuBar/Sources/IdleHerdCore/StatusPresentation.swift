@@ -15,6 +15,27 @@ public struct StatusPresentation {
         return value.formatted(.number.precision(.fractionLength(1))) + "%"
     }
 
+    public static func jobOrigin(_ job: [String: Any]) -> String {
+        if let host = job["origin_host"] as? String, !host.isEmpty { return "From \(host)" }
+        if (job["peer_origin"] as? Bool) == true {
+            if let worker = job["origin_worker_id"] as? String, !worker.isEmpty {
+                return "From peer \(worker.prefix(8))"
+            }
+            return "From unknown peer"
+        }
+        return "From this Mac"
+    }
+
+    public static func quarantineRecovery(_ job: [String: Any], now: Date = Date()) -> String? {
+        guard job["state"] as? String == "quarantined" else { return nil }
+        if job["quarantine_recovery"] as? String == "awaiting_backend",
+           let deadline = job["quarantine_recovery_deadline"] as? Double,
+           deadline.isFinite, deadline > now.timeIntervalSince1970 {
+            return "Waiting for backend completion · up to \(Int(ceil(deadline - now.timeIntervalSince1970)))s"
+        }
+        return "Backend outcome unknown · stopped-backend recovery required"
+    }
+
     public var mode: String {
         switch snapshot?.mode.mode {
         case "auto": return "Automatic"

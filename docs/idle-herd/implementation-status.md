@@ -1,5 +1,48 @@
 # Idle-Herd implementation status
 
+## Job host labels and confirmed quarantine recovery — November 3, 2026
+
+Menu bar job rows now identify the originating host, such as **From
+pstudio.local**, instead of generic peer/local-origin labels. Device details and
+the dashboard also show hostnames. The worker derives the origin identity from
+the authenticated peer principal, then resolves its last authenticated hostname
+or endpoint IP; missing older-peer information falls back to worker identity.
+Host labels persist in the peer directory across departures, restarts and endpoint
+changes. An optional status-response header negotiates the signed hostname field
+without changing discovery descriptors or breaking older strict status clients.
+
+After a client disconnect, the execution is still durably quarantined first.
+The worker now retains that original successful backend response for up to
+`IDLE_HERD_QUARANTINE_DRAIN_SECONDS` (default **30**, range 0–120; 0 disables),
+discarding detached output. Original-response completion proof releases the slot
+automatically under its token, incarnation and generation fences. Terminal
+`done: true` does not require the socket to close; synchronous responses require
+complete output. No backend request is replayed. Timeouts, incomplete/lost streams
+and restart-orphaned executions remain quarantined; TTL, model residency and job
+cancellation cannot free uncertain work. Shutdown stops readers before the worker
+ledger closes. The UI distinguishes the recovery window from outcomes that still
+require stopped-backend reconciliation.
+
+Verification uses fabricated backends, not a live model. The native loopback
+regression disconnects a client, verifies that backend execution and quarantine
+remain, then completes the original stream and observes available capacity without
+restart or a second execution. Transport cases cover late terminal proof with a
+socket kept open, incomplete output and a hung response exceeding the recovery
+window. Ledger cases reject old-incarnation/reused-generation completion proof.
+Owner API tests cover hostname attribution and both recovery labels without
+exposing lease tokens or adding public quarantine release.
+
+Full Python regression: **2351 passed, 8 skipped, 3 inherited warnings in 125.65s**
+(`/private/tmp/idle-herd-host-recovery-final-pytest.log`);
+Swift package tests: **12 passed**. Ruff lint/format (127 source/modified-test
+files) and `git diff --check` passed. Packaged
+`apps/macos/IdleHerdMenuBar/build/Idle-Herd.app`; an offscreen render of the actual
+SwiftUI view with fabricated status verified hostname and recovery text fit.
+This is not evidence of live GUI interaction, LAN/model acceptance, signing or
+notarization. No live daemon/backend was restarted and no existing uncertain lease
+was cleared. Update both daemons and reopen the rebuilt app to activate the change;
+old quarantines without an original response still need offline reconciliation.
+
 ## Disconnected stream left a running lease — November 3, 2026
 
 Follow-up investigation of another 504 found an important limitation in the

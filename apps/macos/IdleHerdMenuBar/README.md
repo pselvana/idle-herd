@@ -34,6 +34,15 @@ explicit permission and license acceptance; progress updates through snapshots a
 SSE. See [model sharing](../../../docs/idle-herd/phase-7.md). Login launch
 uses macOS Service Management and may require a signed installed app.
 
+Job rows show **From hostname**, such as `From pstudio.local`, instead of a generic
+peer-origin label. Older peers fall back to endpoint IP or worker identity.
+Quarantined rows distinguish a bounded wait for original-backend completion from
+unknown outcomes requiring stopped-backend recovery. The daemon defaults to a
+30-second recovery window; it releases a slot only when that original response
+confirms completion, never just because time elapsed. Already orphaned execution
+still requires [offline reconciliation](../../../docs/idle-herd/phase-1.md#durable-authority-and-recovery).
+Update/restart each daemon and reopen the rebuilt app to use these additions.
+
 `ClientSmoke` is a Foundation-only mock transport check for authenticated
 snapshot, disconnect, and recovery: `swift run ClientSmoke`. The included Xcode project and shared scheme configure the app and UI test
 host. On a Mac with full Xcode, run:

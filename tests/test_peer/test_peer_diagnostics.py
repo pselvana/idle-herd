@@ -68,6 +68,20 @@ async def test_signed_rpc_auth_redaction_and_offline(tmp_path):
                 app.state.ledger.worker_id,
             )
             payload = result.json()
+            assert "hostname" not in payload  # Older strict clients retain their schema.
+            app.state.hostname = "pstudio.local"
+            named_headers = identity.sign_request("POST", PATH, body)
+            named_headers["x-idle-status-hostname"] = "1"
+            named = await client.post(PATH, content=body, headers=named_headers)
+            assert named.status_code == 200
+            assert named.json()["hostname"] == "pstudio.local"
+            identity.verify_response(
+                named_headers["x-idle-nonce"],
+                200,
+                named.content,
+                named.headers,
+                app.state.ledger.worker_id,
+            )
             assert secret not in result.text and record.job_id not in result.text
             assert payload["queued_jobs"] == 1
             assert payload["worker_id"] == app.state.ledger.worker_id
@@ -147,6 +161,9 @@ def test_model_names_and_counts_are_bounded():
         observation(total_slots=129)
     with pytest.raises(ValidationError):
         observation(waiters=10001)
+    for bad in ("../private/path", "host\nInjected", "a" * 254):
+        with pytest.raises(ValidationError):
+            observation(hostname=bad)
 
 
 @pytest.mark.asyncio

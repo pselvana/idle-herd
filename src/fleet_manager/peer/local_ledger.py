@@ -322,6 +322,15 @@ class LocalLedger:
                     model=item.model,
                     workload=item.workload,
                     peer_origin=item.peer_origin,
+                    origin_worker_id=(
+                        item.request_id.split("/", 2)[1]
+                        if item.peer_origin
+                        and item.request_id.startswith("peer/")
+                        and len(item.request_id.split("/", 2)) == 3
+                        else None
+                        if item.peer_origin
+                        else self.worker_id
+                    ),
                     created_at=item.created_at,
                     updated_at=item.updated_at,
                 )
@@ -541,6 +550,22 @@ class LocalLedger:
             if lease.state != "running":
                 raise AdmissionError("execution_not_running")
             await self._event(lease, "released" if stopped else "quarantined")
+
+    async def confirm_backend_completion(self, token: str):
+        """Internal live-stream proof only; never a timer, probe or owner RPC.
+
+        The original response must confirm completion. Authentication fences old
+        incarnations/generations, so a detached reader cannot release reused work.
+        """
+        async with self._transaction():
+            lease = await self._authenticate(token)
+            if lease.state not in {"running", "quarantined"}:
+                raise AdmissionError("execution_not_running")
+            await self._db.execute(
+                "INSERT INTO events(reservation_id,state,observed_at) VALUES (?,?,?)",
+                (lease.reservation_id, "backend_confirmed_stopped", time.time()),
+            )
+            await self._event(lease, "released")
 
     async def capacity(
         self,

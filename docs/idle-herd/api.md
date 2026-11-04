@@ -86,6 +86,16 @@ diagnostics. Job history adds effective durability, acknowledged copy count,
 attempt count and duplicate consent. Worker leases add lease ID, hashed request
 correlation and incarnation/generation; reservation bearer tokens are excluded.
 
+Node status and peer details include optional `hostname`. Job summaries include
+`origin_worker_id`, `origin_host` and `execution_host`; worker leases include
+`origin_worker_id` and `origin_host`. Origins come from the authenticated peer
+principal, not caller-supplied display text. Host labels use the last authenticated
+hostname or the known endpoint IP, with worker identity as the UI fallback.
+Quarantined worker leases report `quarantine_recovery: awaiting_backend` with a
+Unix-seconds `quarantine_recovery_deadline` while the original backend stream is
+being read for completion proof, otherwise `manual_required`. Other states use
+null. A deadline is a recovery window, never permission to free uncertain work.
+
 `GET /v1/node/diagnostics?model=NAME` accepts an optional 1–512 character model name
 and returns the existing fields plus platform/worker observation and structured
 `checks` (`code`, `title`, `state`, `detail`, `remedy`) and optional live local
@@ -99,6 +109,12 @@ It exposes no owner control or private job records. An independent semaphore-bou
 background poller verifies signatures/identity/incarnation/age and expires cached
 results. A 404 from older peers leaves diagnostics unknown without altering
 discovery/admission. The discovery descriptor schema is unchanged.
+
+New status clients send `X-Idle-Status-Hostname: 1` to request the optional
+`hostname` field in the signed response. The request body remains `{}`. Servers
+omit the field for older strict clients; older servers ignore the header. Host
+labels are validated and retained only after response signature, identity,
+incarnation and freshness checks, and survive peer-directory reloads.
 
 New owner preferences: `quiet_hours_enabled`, start/end minute-of-day (0–1439),
 `peer_max_concurrent` (0–128 per authenticated origin), `notifications_enabled` and

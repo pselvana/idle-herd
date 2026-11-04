@@ -25,6 +25,9 @@ class PeerSettings(BaseSettings):
     # Ollama owns model residency, eviction and actual model/context fit. The
     # optional strict mode additionally enforces our conservative RAM estimates.
     memory_admission_mode: Literal["backend", "strict"] = "backend"
+    # Keep a detached response long enough to confirm backend completion. Time
+    # alone never releases quarantine; zero disables this recovery window.
+    quarantine_drain_seconds: float = Field(default=30, ge=0, le=120)
     # Conservative cold-weight multiplier plus per-admission KV/runtime allowance.
     weight_multiplier: float = Field(default=1.2, ge=1)
     request_memory_gb: float = Field(default=1, gt=0)

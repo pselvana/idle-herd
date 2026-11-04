@@ -126,6 +126,22 @@ async def test_referral_never_renews_liveness_and_expiry(network):
     assert all(not p.reachable for p in c.snapshot())
 
 
+async def test_authenticated_host_label_survives_restart_and_endpoint_migration(network):
+    create, _, _ = network
+    a, b = await create(1), await create(2)
+    await a.discovered(b.endpoint, "worker-2")
+    assert a.host_for("worker-2") == "127.0.0.2"
+    await a.remember_hostname("worker-2", "pstudio.local")
+    restored = await create(1)
+    assert restored.host_for("worker-2") == "pstudio.local"
+    await restored.discovered("https://127.0.0.2:13000", "worker-2")
+    assert restored.host_for("worker-2") == "pstudio.local"
+    assert restored.snapshot()[0].hostname == "pstudio.local"
+    with pytest.raises(ValueError, match="hostname"):
+        await restored.remember_hostname("worker-2", "../private/path")
+    assert restored.host_for("not-known") is None
+
+
 async def test_sender_binding_and_referral_identity_poisoning(network):
     create, _, _ = network
     a, b = await create(1), await create(2)

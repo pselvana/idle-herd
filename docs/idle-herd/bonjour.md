@@ -29,6 +29,12 @@ authority or identity domain. Subsequent connections still require verified TLS,
 signed RPC/stream binding and durable nonce replay protection. Discovery supplies
 candidates; a direct authenticated exchange must succeed before capacity is live.
 
+Authenticated status polling also learns a bounded hostname for display. The peer
+directory retains it across departures, restarts and endpoint changes. Job rows
+show that origin hostname (or its known endpoint IP for older peers); hostname
+labels do not grant trust or change routing. Bonjour descriptors remain compatible
+with earlier workers.
+
 The mesh federates independently initialized identity domains. Worker/cluster UUIDs,
 durable lease/job history, and optional admin Raft membership are preserved.
 Authority-issued revocations remain within their original identity domain. For

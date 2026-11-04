@@ -55,11 +55,46 @@ def create_router() -> APIRouter:
         prefix="/v1/node", tags=["local owner controls"], dependencies=[Depends(require_read)]
     )
 
+    def worker_host(request: Request, worker_id: str | None) -> str | None:
+        state = request.app.state
+        if worker_id == state.ledger.worker_id:
+            return getattr(state, "hostname", None)
+        directory = getattr(state, "directory", None)
+        lookup = getattr(directory, "host_for", None)
+        return lookup(worker_id) if lookup and worker_id else None
+
     async def summaries(request: Request) -> JobsResponse:
         records = await request.app.state.job_journal.list_jobs()
+        leases = []
+        proxy = getattr(request.app.state, "streaming_proxy", None)
+        recovery = getattr(proxy, "recovery_deadline", None)
+        for item in await request.app.state.ledger.job_summaries():
+            lease = WorkerLease.model_validate(item)
+            deadline = recovery(lease.job_id) if recovery and lease.state == "quarantined" else None
+            leases.append(
+                lease.model_copy(
+                    update={
+                        "model": _model_name(lease.model),
+                        "origin_host": worker_host(request, lease.origin_worker_id),
+                        "quarantine_recovery_deadline": deadline,
+                        "quarantine_recovery": (
+                            "awaiting_backend"
+                            if deadline and deadline > time.time()
+                            else "manual_required"
+                        )
+                        if lease.state == "quarantined"
+                        else None,
+                    }
+                )
+            )
         return JobsResponse(
             jobs=[
                 JobSummary(
+                    origin_worker_id=record.origin_id,
+                    origin_host=worker_host(request, record.origin_id),
+                    execution_host=worker_host(request, record.attempts[-1].worker_id)
+                    if record.attempts
+                    else None,
                     job_id=record.job_id,
                     state=record.state,
                     model=_model_name(record.submission.model),
@@ -75,12 +110,7 @@ def create_router() -> APIRouter:
                 for record in records
                 if record.origin_id == request.app.state.ledger.worker_id
             ],
-            worker_leases=[
-                WorkerLease.model_validate(item).model_copy(
-                    update={"model": _model_name(WorkerLease.model_validate(item).model)}
-                )
-                for item in await request.app.state.ledger.job_summaries()
-            ],
+            worker_leases=leases,
         )
 
     async def snapshot(request: Request) -> NodeStatus:
@@ -127,6 +157,7 @@ def create_router() -> APIRouter:
         details = [
             PeerDetail(
                 worker_id=state.ledger.worker_id,
+                hostname=getattr(state, "hostname", None),
                 local=True,
                 reachable=True,
                 incarnation=getattr(state.ledger, "incarnation", None),
@@ -169,6 +200,7 @@ def create_router() -> APIRouter:
             details.append(
                 PeerDetail(
                     worker_id=peer.worker_id,
+                    hostname=worker_host(request, peer.worker_id),
                     reachable=reachable,
                     incarnation=descriptor.incarnation if descriptor else None,
                     models=[_model_name(m) for m in observation.models]
@@ -219,6 +251,7 @@ def create_router() -> APIRouter:
         )
 
         return NodeStatus(
+            hostname=getattr(state, "hostname", None),
             worker_id=state.ledger.worker_id,
             mode=mode,
             observed_at=observed,
@@ -339,6 +372,8 @@ def create_router() -> APIRouter:
         except JobConflict as exc:
             raise HTTPException(409, "job cannot be canceled") from exc
         return JobSummary(
+            origin_worker_id=record.origin_id,
+            origin_host=worker_host(request, record.origin_id),
             job_id=record.job_id,
             state=record.state,
             model=_model_name(record.submission.model),

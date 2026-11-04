@@ -306,7 +306,11 @@ class PeerRPC:
                     inner_scope, body_receiver(inner_body, receive), authenticated_send
                 )
                 return
-        encoded = result.model_dump_json().encode()
+        encoded = result.model_dump_json(
+            exclude={"hostname"}
+            if path == "/peer/v1/status" and headers.get("x-idle-status-hostname") != "1"
+            else None
+        ).encode()
         signed = identity.sign_response(nonce, 200, encoded)
         await Response(content=encoded, media_type="application/json", headers=signed)(
             scope, receive, send

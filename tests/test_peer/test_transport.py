@@ -106,6 +106,73 @@ async def test_timeout_after_dispatch_is_quarantined(ledger):
     assert (await ledger.capacity("tiny:latest")).quarantined_slots == 1
 
 
+@pytest.mark.parametrize(
+    "terminal,recovers", [(b'{"done":true}\n', True), (b'{"done":false}\n', False)]
+)
+async def test_disconnected_response_recovers_only_with_original_completion(
+    ledger, terminal, recovers
+):
+    release = asyncio.Event()
+
+    class LateResponse(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"done":false}\n'
+            await release.wait()
+            yield terminal
+            if recovers:
+                # A terminal record is proof even if the socket stays open.
+                await asyncio.Event().wait()
+
+        async def aclose(self):
+            pass
+
+    async with httpx.AsyncClient(
+        transport=AdmissionTransport(
+            ledger, httpx.MockTransport(lambda request: httpx.Response(200, stream=LateResponse()))
+        ),
+        base_url="http://localhost",
+    ) as client:
+        async with client.stream("POST", "/api/chat", json={"model": "tiny"}) as response:
+            async for _chunk in response.aiter_bytes():
+                break
+        assert (await ledger.capacity("tiny:latest")).quarantined_slots == 1
+        release.set()
+        async with asyncio.timeout(2):
+            while True:
+                view = await ledger.capacity("tiny:latest")
+                if view.quarantined_slots == int(not recovers) and (
+                    recovers or not client._transport._streams
+                ):
+                    break
+                await asyncio.sleep(0.01)
+        assert view.observed_available_slots == int(recovers)
+
+
+async def test_recovery_timeout_never_frees_unconfirmed_execution(ledger):
+    ledger.settings.quarantine_drain_seconds = 0.03
+    stopped = asyncio.Event()
+
+    class HungResponse(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"done":false}\n'
+            await asyncio.Event().wait()
+
+        async def aclose(self):
+            stopped.set()
+
+    transport = AdmissionTransport(
+        ledger, httpx.MockTransport(lambda request: httpx.Response(200, stream=HungResponse()))
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        async with client.stream("POST", "/api/chat", json={"model": "tiny"}) as response:
+            async for _chunk in response.aiter_bytes():
+                break
+        await asyncio.wait_for(stopped.wait(), 1)
+        view = await ledger.capacity("tiny:latest")
+        assert view.quarantined_slots == 1 and view.observed_available_slots == 0
+        assert not transport._streams
+
+
 async def test_level_cancellation_before_backend_headers_still_commits_quarantine(ledger):
     started = asyncio.Event()
 

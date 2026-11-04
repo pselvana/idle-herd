@@ -79,6 +79,17 @@ async def test_native_client_disconnect_quarantines_without_daemon_restart(tmp_p
                     await asyncio.sleep(0.02)
             assert view["observed_available_slots"] == 0
             assert (await client.get(backend_url + "/state")).json()["active"] == 1
+            await client.post(backend_url + "/finish")
+            # Keep the original backend response alive after disconnect. Its
+            # terminal now provides proof, without a restart or another execution.
+            async with asyncio.timeout(3):
+                while True:
+                    view = (await client.get(peer_url + "/v1/cluster/capacity?model=tiny")).json()
+                    if view["quarantined_slots"] == 0:
+                        break
+                    await asyncio.sleep(0.02)
+            assert view["observed_available_slots"] == 1
+            assert (await client.get(backend_url + "/state")).json()["started"] == 1
         finally:
             await client.post(backend_url + "/finish")
 

@@ -13,6 +13,65 @@ from fleet_manager.peer.models import EligibilityDecision
 from fleet_manager.peer.sensors import IdleSignal
 
 
+@pytest.mark.asyncio
+async def test_worker_jobs_identify_origin_host_and_quarantine_recovery(tmp_path, monkeypatch):
+    import time
+
+    from fleet_manager.peer.app import create_peer_app
+    from fleet_manager.peer.models import AcquireRequest, PeerSettings
+
+    app = create_peer_app(
+        PeerSettings(data_dir=str(tmp_path), slots=2, background_policy="always"),
+        backend_transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"models": [{"name": "tiny:latest", "size": 1000}]}
+            )
+        ),
+    )
+    async with app.router.lifespan_context(app):
+        app.state.hostname = "my-mac.local"
+        app.state.directory = SimpleNamespace(
+            host_for=lambda worker: "pstudio.local" if worker == "remote-worker" else None,
+            snapshot=lambda: [],
+        )
+        ledger = app.state.ledger
+        remote = await ledger.acquire(
+            AcquireRequest(
+                model="tiny", request_id="peer/remote-worker/request", workload="background"
+            ),
+            peer=True,
+        )
+        local = await ledger.acquire(AcquireRequest(model="tiny", request_id="local"))
+        await ledger.consume(remote.token, remote.model)
+        await ledger.finish(remote.token, stopped=False)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://127.0.0.1:11435",
+            headers={"Authorization": "Bearer " + app.state.control_credentials.read_token},
+        ) as client:
+            response = await client.get("/v1/node/jobs")
+            assert response.status_code == 200, response.text
+            leases = {j["job_id"]: j for j in response.json()["worker_leases"]}
+            assert leases[remote.reservation_id]["origin_worker_id"] == "remote-worker"
+            assert leases[remote.reservation_id]["origin_host"] == "pstudio.local"
+            assert leases[remote.reservation_id]["quarantine_recovery"] == "manual_required"
+            assert leases[local.reservation_id]["origin_host"] == "my-mac.local"
+            assert remote.token not in response.text and local.token not in response.text
+            monkeypatch.setattr(
+                app.state.streaming_proxy, "recovery_deadline", lambda _: time.time() + 30
+            )
+            response = await client.get("/v1/node/jobs")
+            lease = next(
+                j for j in response.json()["worker_leases"] if j["job_id"] == remote.reservation_id
+            )
+            assert lease["quarantine_recovery"] == "awaiting_backend"
+            denied = await client.delete(
+                "/v1/capacity/reservations/" + remote.reservation_id,
+                headers={"X-Idle-Herd-Reservation": remote.token},
+            )
+            assert denied.status_code == 409
+
+
 def test_credentials_are_persistent_and_private(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_or_create_credentials(tmp_path, create=False)
