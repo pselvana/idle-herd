@@ -177,14 +177,15 @@ async def test_automatic_permission_overrides_persist_and_removed_models_withdra
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "unsupported", ["safetensors", "vision", "adapter", "symlink", "relative", "magic"]
+    "unsupported", ["safetensors", "missing_projector", "adapter", "symlink", "relative", "magic"]
 )
 async def test_discovery_does_not_export_partial_or_unsafe_models(tmp_path, unsupported):
     _, path, show, _, transport = model_fixture(tmp_path)
     if unsupported == "safetensors":
         show["details"]["format"] = "safetensors"
-    elif unsupported == "vision":
+    elif unsupported == "missing_projector":
         show["capabilities"].append("vision")
+        show["modelfile"] += "FROM /missing/projector.gguf\n"
     elif unsupported == "adapter":
         show["modelfile"] += "ADAPTER /other/file\n"
     elif unsupported == "symlink":

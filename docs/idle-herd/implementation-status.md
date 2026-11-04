@@ -1,5 +1,74 @@
 # Idle-Herd implementation status
 
+## Complete MLX, multimodal and multi-file exports — November 3, 2026
+
+Implemented the owner's requested package-copy extension for both installed
+Ollama models and standalone MLX/export directories. New `mlx` and `gguf-package`
+manifests bind relative filenames, file roles, byte counts, SHA-256s, model
+metadata and the aggregate size. Resumable chunk offsets address an ordered
+concatenation; no archive is extracted and source absolute paths stay private.
+The destination verifies all component hashes, headers and shard references before
+uploading any backend blobs, uses supported Ollama create APIs, and publishes a
+managed `.package` cache only after admitted load confirmation. Existing local
+installation locks, consent, ACLs, quotas, source failover and restart-safe claims
+remain in force. Backend import rejection has an explicit HTTP-based reason code.
+
+Ollama-managed packages read the selected digest-verified manifest and referenced
+blobs without installing private backend directories. Manifest-list parent/child
+digest spellings are handled. GGUF model shards, projectors, adapters and draft
+files retain their roles. Installed MLX tensor blobs are exposed as safetensors
+files with a regenerated index from their headers; stale pre-import shard names
+are not reused. Configuration/tokenizers, renderer/parser, preset messages,
+capabilities, template/system/parameters and license are retained. Single-file
+GGUF canonical hashes and legacy wire fields remain unchanged. Signed inventory
+negotiates `packages:true`, filters offers to the old schema for `{}` clients,
+and uses a fresh signed legacy request only after a verified old-schema rejection.
+
+`IDLE_HERD_MODEL_EXPORTS` maps model names to materialized standalone directories;
+first discovery and file changes hash their contents in the background. Active
+chunk reads and revocation use cached offers plus current ACLs without waiting
+behind unrelated directory hashing. Files are
+available even if source Ollama is stopped. Discovery is canceled/awaited on
+shutdown. `models register-directory` computes a complete manifest without manual
+SHA entry; `IDLE_HERD_OLLAMA_MODELS_DIR` selects custom source storage. Symlinks,
+special files, unsafe/duplicate case-folded names, incomplete shards and oversized
+metadata are rejected. Nonblocking source opens prevent FIFOs from hanging reads.
+MLX destinations enforce Apple Silicon macOS and a compatible Ollama version
+before transfer. No separate native mlx_lm serving process was added.
+
+The companion now decodes packages, shows readable format labels and file counts,
+and exposes an Included files disclosure before copy consent. Load checks retain
+the embedding-specific path; packages additionally verify expected capabilities
+and MLX format. Vision-capable checks include a small valid PNG. This does not
+certify every audio/video/operator/context combination. Specific architectures,
+quantizations and LoRA adapter support remain properties of the destination's
+Ollama importer; supported transport is not a promise that every backend accepts
+every package. Default 20-GiB managed-cache and other owner budgets still apply.
+
+Verification: **488 Python tests passed, 1 skipped** across peer, owner,
+container-boundary and legacy embedding regression suites. This includes four
+native TLS process variants: completion GGUF, embedding GGUF, multimodal package
+and MLX package, each covering source loss, resume, backend import/load and local
+survivor inference with fabricated weights/backends. After final compatibility/
+metadata refinements, **66 focused Python cases passed**. The 26 package cases
+cover complete directory and installed-tensor exports, parent/child manifests,
+signed negotiation/replay/revocation, cross-file restart/retry without duplicate
+download/create, corruption, quotas/platform checks, CLI registration, unsafe names,
+special files, shutdown and original canonical hashes. **27 Swift tests passed**;
+Xcode `build-for-testing`, Ruff lint/format and `git diff --check` passed.
+
+A read-only local check against Ollama **0.40.14** recognized seven offers,
+including integrated multimodal `gemma4:26b` and `qwen3.5:9b` packages. It read
+metadata/manifest headers and performed no model import or inference. It did not
+exercise a real MLX model. Offscreen mock-catalog renders were inspected in light
+and dark appearance with expanded file details. Rebuilt the unsigned app at
+`apps/macos/IdleHerdMenuBar/build/Idle-Herd.app`. Logs:
+`/private/tmp/idle-herd-packages-{broad,final-focused,swift,package,xcode,render}.log`.
+Real-weight MLX/Metal and multimodal inference, Windows locks, physical GUI/
+VoiceOver, arbitrary backend certification and full Python-suite acceptance remain
+open. No running daemon/backend was restarted or model store mutated. Restart
+updated source/destination daemons when safe and reopen the companion to activate.
+
 ## Embedding-model import verification fix — November 3, 2026
 
 The owner reported `bge-m3:latest` failing with `backend_load_unconfirmed` after

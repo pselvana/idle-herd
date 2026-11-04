@@ -239,6 +239,12 @@ public struct ModelPeer: Decodable, Identifiable {
     public var displayName: String { hostname ?? worker_id }
 }
 public struct ModelInventoryItem: Decodable, Identifiable {
+    public struct PackageFile: Decodable, Identifiable {
+        public var id: String { name }
+        public let name: String
+        public let size_bytes: Int64
+        public let role: String
+    }
     public var id: String { "\(source_worker_id ?? "local"):\(digest)" }
     public let digest: String
     public let model_id: String
@@ -252,6 +258,14 @@ public struct ModelInventoryItem: Decodable, Identifiable {
     public let quantization: String?
     public let source_worker_id: String?
     public let local: Bool?
+    public let files: [PackageFile]?
+    public var formatLabel: String? {
+        switch format {
+        case "mlx": return "MLX / safetensors"
+        case "gguf-package": return "GGUF package"
+        default: return format?.uppercased()
+        }
+    }
 
     public func canCopy(from source: String, retrying transfer: ModelTransfer? = nil) -> Bool {
         guard local == false, source_worker_id == source,

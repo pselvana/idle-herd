@@ -6,7 +6,7 @@ import base64
 import hashlib
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 from fleet_manager.peer.identity import IdentityError
 from fleet_manager.peer.model_sharing import (
@@ -24,6 +24,11 @@ MAX_MODEL_RESPONSE = 2 * CHUNK_SIZE
 
 class InventoryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    packages: bool = False
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler):
+        return handler(self) if self.packages else {}
 
 
 class ModelInventory(BaseModel):
@@ -82,13 +87,25 @@ class ModelTransport:
         inventories = []
         for peer in self._peers():
             try:
-                result = await self._rpc(
-                    peer, "/peer/v1/models/inventory", InventoryRequest(), ModelInventory
-                )
+                result = await self._inventory_from(peer)
                 inventories.append(PeerInventory(worker_id=peer.worker_id, models=result.models))
             except (httpx.HTTPError, IdentityError, AdmissionError, ValueError):
                 continue
         return inventories
+
+    async def _inventory_from(self, peer):
+        try:
+            return await self._rpc(
+                peer, "/peer/v1/models/inventory", InventoryRequest(packages=True), ModelInventory
+            )
+        except AdmissionError as exc:
+            if exc.status not in {400, 422}:
+                raise
+            # Older strict peers accept only {}. A new signed request/nonce is
+            # required for fallback; never reinterpret a failed signature.
+            return await self._rpc(
+                peer, "/peer/v1/models/inventory", InventoryRequest(), ModelInventory
+            )
 
     async def peer_inventory(self, worker_id: str) -> PeerInventory:
         """Fetch one live authorized catalog, preserving failures for the owner UI."""
@@ -97,9 +114,7 @@ class ModelTransport:
         if peer is None:
             raise AdmissionError("model_source_unavailable", 503)
         try:
-            result = await self._rpc(
-                peer, "/peer/v1/models/inventory", InventoryRequest(), ModelInventory
-            )
+            result = await self._inventory_from(peer)
         except (httpx.HTTPError, IdentityError, AdmissionError, ValueError) as exc:
             raise AdmissionError("model_inventory_unavailable", 503) from exc
         return PeerInventory(worker_id=peer.worker_id, models=result.models)

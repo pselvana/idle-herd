@@ -68,11 +68,21 @@ are filled internally. Changing the selection or refreshing requires fresh conse
 retry is limited to the original model revision. Empty catalogs, unreachable peers
 and failed starts have distinct states. Reopen the rebuilt app and update/restart
 the daemon when safe to enable the peer-specific inventory request. Installed
-readable standalone Ollama GGUFs now appear automatically and are shared with
+readable Ollama models now appear automatically and are shared with
 authenticated peers by default, including new registrations/imported copies.
 Existing per-model sharing restrictions persist. Disable automatic backend discovery
-with `IDLE_HERD_MODEL_AUTO_SHARE=false`. Multimodal, adapter/multi-file and MLX
-exports remain unsupported; they are not shown as copyable base-weight substitutes.
+with `IDLE_HERD_MODEL_AUTO_SHARE=false`. Complete GGUF/multimodal packages and
+MLX/safetensors models include shards, tokenizers/configuration, projectors and
+other declared files. The model row shows the format and file count; expand
+**Included files** before approving a package. Both peers need updated daemons.
+
+Standalone MLX/export directories can be offered with
+`IDLE_HERD_MODEL_EXPORTS='{"local-model:latest":"/absolute/export/path"}'` in the
+source daemon's environment, or with `idle-herd models register-directory`.
+`IDLE_HERD_OLLAMA_MODELS_DIR` selects a custom source Ollama store. Destinations
+import through local Ollama; MLX requires Apple Silicon macOS and a compatible
+Ollama 0.40+ backend. Specific architectures and LoRA adapters still depend on
+that backend's importer. See [package setup and limits](../../../docs/idle-herd/phase-7.md).
 
 The transfer byte bar is labeled **Downloaded**. A full bar still needs Ollama
 installation and model verification. The daemon now checks embedding-only models

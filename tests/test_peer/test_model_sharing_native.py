@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import platform
 import sys
 import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -12,7 +13,8 @@ import httpx
 import pytest
 from test_peer_network import chat, free_port, provision, wait_for
 
-from fleet_manager.peer.model_sharing import CHUNK_SIZE, ArtifactManifest
+from fleet_manager.peer.model_packages import directory_artifact, read_range
+from fleet_manager.peer.model_sharing import CHUNK_SIZE, ArtifactManifest, OllamaImportOptions
 
 RUNNER = Path(__file__).with_name("model_sharing_runner.py")
 
@@ -44,8 +46,11 @@ def auth(path):
     return {"Authorization": "Bearer " + token}
 
 
-@pytest.mark.parametrize("embedding", [False, True])
-async def test_native_sharing_resumes_after_source_loss(tmp_path, embedding):
+@pytest.mark.parametrize("kind", ["completion", "embedding", "multimodal", "mlx"])
+async def test_native_sharing_resumes_after_source_loss(tmp_path, kind):
+    if kind == "mlx" and (sys.platform != "darwin" or platform.machine() != "arm64"):
+        pytest.skip("MLX destination admission requires Apple Silicon")
+    embedding = kind == "embedding"
     paths = [tmp_path / "source", tmp_path / "destination"]
     identities = await provision(paths)
     ports = [free_port(), free_port()]
@@ -66,6 +71,37 @@ async def test_native_sharing_resumes_after_source_loss(tmp_path, embedding):
         manifest_digest="0" * 64,
     )
     manifest.manifest_digest = manifest.calculated_digest()
+    source_files = {}
+    if kind in {"multimodal", "mlx"}:
+        directory = tmp_path / "export"
+        directory.mkdir()
+        if kind == "multimodal":
+            (directory / "model.gguf").write_bytes(data)
+            (directory / "projector.gguf").write_bytes(b"GGUFprojector")
+        else:
+            header = json.dumps(
+                {"weight": {"dtype": "U8", "shape": [len(data)], "data_offsets": [0, len(data)]}}
+            ).encode()
+            (directory / "model.safetensors").write_bytes(
+                len(header).to_bytes(8, "little") + header + data
+            )
+            (directory / "config.json").write_text('{"model_type":"test"}')
+            (directory / "tokenizer.json").write_text('{"vocab":{}}')
+        artifact = directory_artifact(
+            directory,
+            model_id=shared_model,
+            format="mlx" if kind == "mlx" else "gguf-package",
+            license="test license",
+            provenance="test fixture",
+        )
+        if kind == "multimodal":
+            artifact.manifest.ollama = OllamaImportOptions(capabilities=["completion", "vision"])
+            artifact.manifest.digest = artifact.manifest.calculated_package_digest()
+            artifact.manifest.manifest_digest = artifact.manifest.calculated_digest()
+        manifest = artifact.manifest
+        source_files = artifact.source_files
+        digest = manifest.digest
+        data = read_range(artifact, 0, manifest.size_bytes)
     async with AsyncExitStack() as stack:
         client = await stack.enter_async_context(httpx.AsyncClient(trust_env=False, timeout=10))
         backend = [
@@ -85,6 +121,7 @@ async def test_native_sharing_resumes_after_source_loss(tmp_path, embedding):
             json={
                 "manifest": manifest.model_dump(),
                 "path": str(model_file),
+                "source_files": source_files,
                 "allowed_peers": [identities[1].worker_id],
                 "sharing_enabled": True,
                 "license_approved": True,
@@ -148,7 +185,7 @@ async def test_native_sharing_resumes_after_source_loss(tmp_path, embedding):
             return transfer["state"] == "ready"
 
         await wait_for(ready, timeout=30)
-        assert (paths[1] / "model-sharing" / (digest + ".gguf")).read_bytes() == data
+        assert (paths[1] / "model-sharing" / (digest + manifest.cache_suffix)).read_bytes() == data
         restarted.kill()
         await restarted.wait()
         assert (await chat(client, dest["url"], "beta")).status_code == 200
@@ -156,7 +193,20 @@ async def test_native_sharing_resumes_after_source_loss(tmp_path, embedding):
             dest["url"] + ("/api/embed" if embedding else "/api/generate"),
             json={"model": shared_model, "input": "survivor check"}
             if embedding
-            else {"model": shared_model, "prompt": "", "stream": False},
+            else {
+                "model": shared_model,
+                "prompt": "",
+                "stream": False,
+                **(
+                    {
+                        "images": [
+                            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC"
+                        ]
+                    }
+                    if kind == "multimodal"
+                    else {}
+                ),
+            },
         )
         assert generated.status_code == 200, generated.text
         if embedding:

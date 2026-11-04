@@ -1,6 +1,7 @@
 """Separate native processes for model-sharing integration, with fabricated Ollama."""
 
 import asyncio
+import hashlib
 import json
 import sys
 
@@ -22,6 +23,10 @@ def backend(model):
     async def tags():
         return {"models": list(state["models"].values())}
 
+    @app.get("/api/version")
+    async def version():
+        return {"version": "0.40.11"}
+
     @app.post("/api/blobs/{digest}")
     async def blob(digest: str, request: Request):
         state["blobs"][digest] = await request.body()
@@ -30,13 +35,26 @@ def backend(model):
     @app.post("/api/create")
     async def create(request: Request):
         spec = await request.json()
-        digest = spec["files"]["model.gguf"]
-        assert digest in state["blobs"]
-        name = spec["model"] + ":latest"
+        digests = [
+            digest
+            for key in ("files", "adapters", "draft_files")
+            for digest in spec.get(key, {}).values()
+        ]
+        assert digests and all(digest in state["blobs"] for digest in digests)
+        digest = "sha256:" + hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
+        name = spec["model"] if ":" in spec["model"] else spec["model"] + ":latest"
         state["models"][name] = {
             "name": name,
-            "size": len(state["blobs"][digest]),
+            "size": sum(len(state["blobs"][digest]) for digest in digests),
             "digest": digest,
+            "details": {
+                "format": "safetensors"
+                if any(name.endswith(".safetensors") for name in spec["files"])
+                else "gguf"
+            },
+            "capabilities": spec.get(
+                "capabilities", ["embedding" if "-embedding:" in name else "completion"]
+            ),
         }
         return {"status": "success"}
 
@@ -45,7 +63,13 @@ def backend(model):
         spec = await request.json()
         name = spec["model"] if ":" in spec["model"] else spec["model"] + ":latest"
         assert name in state["models"]
-        return {"capabilities": ["embedding" if "-embedding:" in name else "completion"]}
+        record = state["models"][name]
+        return {
+            "capabilities": record.get(
+                "capabilities", ["embedding" if "-embedding:" in name else "completion"]
+            ),
+            "details": record.get("details", {"format": "gguf"}),
+        }
 
     @app.post("/api/embed")
     async def embed(request: Request):
@@ -63,6 +87,8 @@ def backend(model):
             return JSONResponse(
                 status_code=400, content={"error": "model does not support generate"}
             )
+        if "vision" in state["models"][name].get("capabilities", []):
+            assert spec.get("images"), "vision model must be checked with an image"
         return {"model": spec["model"], "response": "", "done": True, "done_reason": "stop"}
 
     return app

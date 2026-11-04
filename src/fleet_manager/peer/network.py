@@ -210,8 +210,10 @@ class PeerRPC:
                 raise AdmissionError("manual_offline", 503)
             sharing = self.local.state.model_sharing
             if path.endswith("inventory"):
-                InventoryRequest.model_validate_json(body)
-                models = (await sharing.inventory(principal))[:MAX_INVENTORY]
+                inventory_request = InventoryRequest.model_validate_json(body)
+                models = (
+                    await sharing.inventory(principal, include_packages=inventory_request.packages)
+                )[:MAX_INVENTORY]
                 result = ModelInventory(models=models)
             elif path.endswith("manifest"):
                 request = ManifestRequest.model_validate_json(body)

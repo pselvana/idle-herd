@@ -1287,7 +1287,7 @@ struct TransferView: View {
                     notice("Couldn’t load models", detail: catalogError, icon: "exclamationmark.triangle")
                 } else if catalog.isEmpty {
                     notice(retry ? "Original model unavailable" : "No shared models available",
-                           detail: retry ? "Choose another peer or ask the source owner to share the original model revision again." : "No compatible shared models were found. Models must be installed in the peer’s Ollama backend and readable by its daemon. Its owner may also have disabled sharing.",
+                           detail: retry ? "Choose another peer or ask the source owner to share the original model revision again." : "No compatible shared models were found. Models must be installed in Ollama or registered as export directories and readable by the peer’s daemon. Its owner may also have disabled sharing.",
                            icon: "shippingbox")
                 } else {
                     ScrollView {
@@ -1327,7 +1327,8 @@ struct TransferView: View {
         }.padding(.vertical, 8)
     }
     private func modelSummary(_ item: ModelInventoryItem) -> String {
-        [item.format?.uppercased(), item.backend?.capitalized, item.quantization,
+        [item.formatLabel, item.backend?.capitalized, item.quantization,
+         item.files.map { "\($0.count) files" },
          item.size_bytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }]
             .compactMap { $0 }.joined(separator: " · ")
     }
@@ -1338,6 +1339,22 @@ struct TransferView: View {
                 detail("License", value: item.license ?? "Not provided")
                 Divider()
                 detail("Provenance", value: item.provenance ?? "Not provided")
+                if let files = item.files {
+                    Divider()
+                    DisclosureGroup("Included files (\(files.count))") {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 8) {
+                                ForEach(files) { file in
+                                    HStack(alignment: .top) {
+                                        Text(file.name).lineLimit(2)
+                                        Spacer()
+                                        Text(ByteCountFormatter.string(fromByteCount: file.size_bytes, countStyle: .file))
+                                    }.font(.system(size: 11))
+                                }
+                            }.padding(.top, 8)
+                        }.frame(maxHeight: 150)
+                    }.font(.system(size: 12))
+                }
             }.textSelection(.enabled)
         }
     }

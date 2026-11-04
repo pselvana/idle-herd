@@ -26,6 +26,13 @@ import httpx
 import psutil
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_serializer
 
+from fleet_manager.peer.model_packages import (
+    MAX_FILES,
+    PackageFile,
+    read_range,
+    validate_layout,
+    verify_package,
+)
 from fleet_manager.peer.models import AdmissionError
 
 CHUNK_SIZE = 1024 * 1024
@@ -43,6 +50,18 @@ class OllamaImportOptions(StrictModel):
     template: str | None = Field(default=None, max_length=65536)
     system: str | None = Field(default=None, max_length=65536)
     parameters: dict[str, JsonValue] = Field(default_factory=dict, max_length=128)
+    renderer: str | None = Field(default=None, max_length=128)
+    parser: str | None = Field(default=None, max_length=128)
+    messages: list[dict[str, JsonValue]] | None = Field(default=None, max_length=128)
+    capabilities: list[str] | None = Field(default=None, max_length=32)
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler):
+        value = handler(self)
+        for key in ("renderer", "parser", "messages", "capabilities"):
+            if getattr(self, key) is None:
+                value.pop(key, None)
+        return value
 
 
 class ArtifactManifest(StrictModel):
@@ -60,6 +79,7 @@ class ArtifactManifest(StrictModel):
     minimum_backend_version: str | None = Field(default=None, pattern=r"^\d+\.\d+\.\d+$")
     manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     ollama: OllamaImportOptions | None = None
+    files: list[PackageFile] | None = Field(default=None, min_length=1, max_length=MAX_FILES)
 
     @model_serializer(mode="wrap")
     def serialize(self, handler):
@@ -67,6 +87,8 @@ class ArtifactManifest(StrictModel):
         # Preserve canonical digests and wire shape for existing standalone offers.
         if self.ollama is None:
             value.pop("ollama", None)
+        if self.files is None:
+            value.pop("files", None)
         return value
 
     def calculated_digest(self) -> str:
@@ -79,6 +101,30 @@ class ArtifactManifest(StrictModel):
             ).encode()
         )
 
+    def calculated_package_digest(self) -> str:
+        return _sha(
+            json.dumps(
+                self.model_dump(exclude={"digest", "manifest_digest"}),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode()
+        )
+
+    @property
+    def cache_suffix(self) -> str:
+        return ".package" if self.files is not None else ".gguf"
+
+    @property
+    def legacy_compatible(self) -> bool:
+        return self.files is None and (
+            self.ollama is None
+            or all(
+                getattr(self.ollama, field) is None
+                for field in ("renderer", "parser", "messages", "capabilities")
+            )
+        )
+
 
 class LocalArtifact(StrictModel):
     manifest: ArtifactManifest
@@ -89,6 +135,8 @@ class LocalArtifact(StrictModel):
     sharing_enabled: bool = True
     license_approved: bool = True
     discovered: bool = False
+    source_files: dict[str, str] = Field(default_factory=dict, max_length=MAX_FILES)
+    inline_files: dict[str, str] = Field(default_factory=dict, max_length=MAX_FILES)
 
     def permits(self, principal: str) -> bool:
         return (
@@ -144,7 +192,9 @@ def _open_source(path: Path):
     if os.name == "nt" or os.open not in os.supports_dir_fd:
         if not _regular(path):
             raise AdmissionError("artifact_changed", 409)
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(
+            path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        )
     else:
         parts = Path(os.path.abspath(path)).parts
         directory = os.open(parts[0], os.O_RDONLY | os.O_DIRECTORY)
@@ -155,7 +205,11 @@ def _open_source(path: Path):
                 )
                 os.close(directory)
                 directory = child
-            fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+            fd = os.open(
+                parts[-1],
+                os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=directory,
+            )
         finally:
             os.close(directory)
     f = os.fdopen(fd, "rb")
@@ -186,6 +240,8 @@ class ModelSharing:
         load_confirm: Callable[[ArtifactManifest], Awaitable[bool]] | None = None,
         bytes_per_second: int = 10 * 1024 * 1024,
         discover_installed: bool = False,
+        model_exports: dict[str, str] | None = None,
+        ollama_models_dir: str | None = None,
     ):
         self.directory = Path(directory)
         self.max_bytes = max_bytes
@@ -210,7 +266,9 @@ class ModelSharing:
         if discover_installed:
             from fleet_manager.peer.ollama_catalog import OllamaCatalog
 
-            self.catalog = OllamaCatalog(self.client)
+            self.catalog = OllamaCatalog(
+                self.client, exports=model_exports, models_dir=ollama_models_dir
+            )
 
     @contextmanager
     def _db(self):
@@ -280,7 +338,15 @@ class ModelSharing:
     def _validate(manifest: ArtifactManifest):
         if manifest.calculated_digest() != manifest.manifest_digest:
             raise AdmissionError("manifest_digest_mismatch", 400)
-        if manifest.format != "gguf" or manifest.backend != "ollama":
+        if manifest.backend != "ollama":
+            raise AdmissionError("unsupported_artifact_format", 400)
+        if manifest.files is not None:
+            validate_layout(manifest)
+            if len(manifest.model_dump_json().encode()) > 2 * CHUNK_SIZE - 1024:
+                raise AdmissionError("package_manifest_too_large", 400)
+            if manifest.calculated_package_digest() != manifest.digest:
+                raise AdmissionError("package_digest_mismatch", 400)
+        elif manifest.format != "gguf":
             raise AdmissionError("unsupported_artifact_format", 400)
 
     async def register(self, artifact: LocalArtifact):
@@ -293,6 +359,9 @@ class ModelSharing:
 
         def check():
             try:
+                if artifact.manifest.files is not None:
+                    verify_package(artifact)
+                    return True
                 with _open_source(path) as f:
                     if os.fstat(f.fileno()).st_size != artifact.manifest.size_bytes:
                         return False
@@ -300,7 +369,7 @@ class ModelSharing:
                     for block in iter(lambda: f.read(CHUNK_SIZE), b""):
                         h.update(block)
                     return h.hexdigest() == artifact.manifest.digest
-            except (OSError, AdmissionError):
+            except (OSError, AdmissionError, ValueError):
                 return False
 
         if not await asyncio.to_thread(check):
@@ -330,7 +399,9 @@ class ModelSharing:
             raise AdmissionError("sharing_permission_required", 403)
         if len(allowed_peers) > 128 or any(not peer or len(peer) > 128 for peer in allowed_peers):
             raise AdmissionError("invalid_peer_permissions", 400)
-        automatic = {item.manifest.digest: item for item in await self._automatic_artifacts()}
+        automatic = {
+            item.manifest.digest: item for item in await self._automatic_artifacts(wait=False)
+        }
 
         def update():
             with self._db() as db:
@@ -382,9 +453,16 @@ class ModelSharing:
 
         return await asyncio.to_thread(read)
 
-    async def inventory(self, principal: str | None = None) -> list[ArtifactManifest]:
+    async def inventory(
+        self, principal: str | None = None, *, include_packages: bool = True
+    ) -> list[ArtifactManifest]:
         items = (await self._artifacts(wait=principal is not None)).values()
-        result = [item.manifest for item in items if principal is None or item.permits(principal)]
+        result = [
+            item.manifest
+            for item in items
+            if (principal is None or item.permits(principal))
+            and (include_packages or item.manifest.legacy_compatible)
+        ]
         if principal is None:
             return result
         # Full licenses/templates can be much larger than legacy standalone
@@ -399,7 +477,9 @@ class ModelSharing:
         return bounded
 
     async def _artifact(self, principal: str, digest: str) -> LocalArtifact:
-        item = (await self._artifacts()).get(digest)
+        # A new/changed directory may take minutes to hash. Existing verified
+        # offers and durable revocation checks must not wait behind that refresh.
+        item = (await self._artifacts(wait=False)).get(digest)
         if item is None or not item.permits(principal):
             raise AdmissionError("artifact_not_found", 404)
         return item
@@ -423,6 +503,12 @@ class ModelSharing:
                     raise AdmissionError("invalid_offset", 400)
 
                 def read():
+                    if item.manifest.files is not None:
+                        return read_range(
+                            item,
+                            request.offset,
+                            min(request.length, item.manifest.size_bytes - request.offset),
+                        )
                     try:
                         with _open_source(Path(item.path)) as f:
                             info = os.fstat(f.fileno())
@@ -589,6 +675,10 @@ class ModelSharing:
             await self._run_transfer(request, fetch_manifest, fetch_chunk)
 
     async def _compatibility(self, manifest: ArtifactManifest):
+        if manifest.format == "mlx" and (
+            platform.system() != "Darwin" or platform.machine().lower() not in {"arm64", "aarch64"}
+        ):
+            raise AdmissionError("mlx_requires_apple_silicon", 400)
         if manifest.required_os and manifest.required_os.lower() != platform.system().lower():
             raise AdmissionError("incompatible_os", 400)
         aliases = {"amd64": "x86_64", "aarch64": "arm64"}
@@ -596,7 +686,12 @@ class ModelSharing:
         required = (manifest.required_cpu or "").lower()
         if required and aliases.get(required, required) != aliases.get(cpu, cpu):
             raise AdmissionError("incompatible_cpu", 400)
-        if manifest.minimum_backend_version:
+        minimum_version = manifest.minimum_backend_version
+        if manifest.format == "mlx":
+            minimum_version = max(
+                minimum_version or "0.0.0", "0.40.0", key=lambda v: tuple(map(int, v.split(".")))
+            )
+        if minimum_version:
             try:
                 response = await self.client.get("/api/version")
                 response.raise_for_status()
@@ -605,7 +700,7 @@ class ModelSharing:
                 if not match:
                     raise AdmissionError("backend_version_unknown", 400)
                 installed = tuple(int(part) for part in match.groups())
-                minimum = tuple(int(part) for part in manifest.minimum_backend_version.split("."))
+                minimum = tuple(int(part) for part in minimum_version.split("."))
                 if installed < minimum:
                     raise AdmissionError("backend_version_incompatible", 400)
             except httpx.HTTPError as exc:
@@ -657,7 +752,7 @@ class ModelSharing:
                     raise AdmissionError("invalid_partial", 400)
                 used = sum(
                     p.stat().st_size
-                    for pattern in ("*.partial", "*.gguf")
+                    for pattern in ("*.partial", "*.gguf", "*.package")
                     for p in self.directory.glob(pattern)
                     if _regular(p)
                 )
@@ -703,7 +798,18 @@ class ModelSharing:
                 )
                 received += len(data)
                 await self._state(request.digest, "transferring", received, total)
-            if await asyncio.to_thread(_hash_file, path) != request.digest:
+            if manifest.files is not None:
+                try:
+                    await asyncio.to_thread(
+                        verify_package, LocalArtifact(manifest=manifest, path=str(path))
+                    )
+                except (AdmissionError, ValueError) as exc:
+                    await asyncio.to_thread(path.unlink)
+                    received = 0
+                    if isinstance(exc, AdmissionError):
+                        raise
+                    raise AdmissionError("invalid_package_metadata", 400) from exc
+            elif await asyncio.to_thread(_hash_file, path) != request.digest:
                 await asyncio.to_thread(path.unlink)
                 received = 0
                 raise AdmissionError("artifact_digest_mismatch", 400)
@@ -712,14 +818,14 @@ class ModelSharing:
                 with path.open("rb") as f:
                     return f.read(4) == b"GGUF"
 
-            if not await asyncio.to_thread(valid_magic):
+            if manifest.files is None and not await asyncio.to_thread(valid_magic):
                 raise AdmissionError("invalid_gguf", 400)
             await self._state(request.digest, "importing", received, total)
             await self._import(manifest, path)
 
             # Publish only after verified import and a successful load.
             def publish():
-                os.replace(path, self.directory / (request.digest + ".gguf"))
+                os.replace(path, self.directory / (request.digest + manifest.cache_suffix))
                 tmp = self.directory / (request.digest + ".manifest.tmp")
                 with tmp.open("w", encoding="utf-8") as f:
                     f.write(manifest.model_dump_json())
@@ -736,7 +842,8 @@ class ModelSharing:
             await self._finish_thread(publish)
             await self.register(
                 LocalArtifact(
-                    manifest=manifest, path=str(self.directory / (request.digest + ".gguf"))
+                    manifest=manifest,
+                    path=str(self.directory / (request.digest + manifest.cache_suffix)),
                 )
             )
             await self._state(request.digest, "ready", received, total)
@@ -744,16 +851,30 @@ class ModelSharing:
             await asyncio.shield(self._state(request.digest, "paused", received, total, "paused"))
             raise
         except Exception as exc:
-            reason = exc.reason if isinstance(exc, AdmissionError) else "transfer_failed"
+            reason = (
+                exc.reason
+                if isinstance(exc, AdmissionError)
+                else (
+                    f"backend_import_rejected_http_{exc.response.status_code}"
+                    if isinstance(exc, httpx.HTTPStatusError)
+                    else "transfer_failed"
+                )
+            )
             await self._state(request.digest, "failed", received, total, str(reason)[:256])
 
     async def _import(self, manifest: ArtifactManifest, path: Path):
         digest = "sha256:" + manifest.digest
 
-        async def content():
+        async def content(offset=0, length=None):
             f = await asyncio.to_thread(path.open, "rb")
             try:
-                while block := await asyncio.to_thread(f.read, CHUNK_SIZE):
+                await asyncio.to_thread(f.seek, offset)
+                remaining = length if length is not None else manifest.size_bytes
+                while remaining:
+                    block = await asyncio.to_thread(f.read, min(CHUNK_SIZE, remaining))
+                    if not block:
+                        raise AdmissionError("artifact_changed", 409)
+                    remaining -= len(block)
                     yield block
             finally:
                 await asyncio.to_thread(f.close)
@@ -790,14 +911,43 @@ class ModelSharing:
             ):
                 raise AdmissionError("model_name_already_installed", 409)
         else:
-            response = await self.client.post("/api/blobs/" + digest, content=content())
-            response.raise_for_status()
+            files, adapters, draft_files = {}, {}, {}
+            if manifest.files is None:
+                response = await self.client.post("/api/blobs/" + digest, content=content())
+                response.raise_for_status()
+                files["model.gguf"] = digest
+            else:
+                offset = 0
+                uploaded = set()
+                for item in manifest.files:
+                    blob_digest = "sha256:" + item.digest
+                    if blob_digest not in uploaded:
+                        response = await self.client.post(
+                            "/api/blobs/" + blob_digest, content=content(offset, item.size_bytes)
+                        )
+                        response.raise_for_status()
+                        uploaded.add(blob_digest)
+                    target = (
+                        adapters
+                        if item.role == "adapter"
+                        else draft_files
+                        if item.role == "draft"
+                        else files
+                    )
+                    target[
+                        item.name.removeprefix("draft/") if item.role == "draft" else item.name
+                    ] = blob_digest
+                    offset += item.size_bytes
             options = manifest.ollama.model_dump(exclude_none=True) if manifest.ollama else {}
+            if adapters:
+                options["adapters"] = adapters
+            if draft_files:
+                options["draft_files"] = draft_files
             response = await self.client.post(
                 "/api/create",
                 json={
                     "model": manifest.model_id,
-                    "files": {"model.gguf": digest},
+                    "files": files,
                     "stream": False,
                     "license": manifest.license,
                     **options,

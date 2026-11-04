@@ -17,6 +17,22 @@ final class MockProtocol: URLProtocol {
 }
 
 final class ClientTests: XCTestCase {
+    func testPackageOffersDecodeWithoutLocalPaths() throws {
+        let object: [String: Any] = [
+            "model_id": "mlx-model:latest", "digest": String(repeating: "a", count: 64),
+            "manifest_digest": String(repeating: "b", count: 64), "format": "mlx",
+            "backend": "ollama", "local": false, "source_worker_id": "peer",
+            "files": [["name": "config.json", "size_bytes": 42, "role": "file"],
+                      ["name": "model.safetensors", "size_bytes": 5_000_000_000, "role": "file"]],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let item = try JSONDecoder().decode(ModelInventoryItem.self, from: data)
+        XCTAssertEqual(item.formatLabel, "MLX / safetensors")
+        XCTAssertEqual(item.files?.map(\.name), ["config.json", "model.safetensors"])
+        XCTAssertEqual(item.files?.last?.size_bytes, 5_000_000_000)
+        XCTAssertTrue(item.canCopy(from: "peer"))
+    }
+
     func body(_ request: URLRequest) throws -> Data {
         if let data = request.httpBody { return data }
         let stream = try XCTUnwrap(request.httpBodyStream)

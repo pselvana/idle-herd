@@ -2,14 +2,21 @@
 
 ## Idle-Herd fork instructions (Phase 10)
 
-The owner now requests default model sharing. Native daemons automatically offer
-installed, readable standalone Ollama GGUF models to authenticated peers; new
+The owner now requests default model sharing, including complete MLX, multimodal
+and multi-file exports. Native daemons offer installed readable Ollama GGUF and
+MLX/safetensors models plus owner-configured standalone export directories; new
 registered/imported artifacts default to `allowed_peers:["*"]`, sharing enabled
 and source permission approved. Explicit per-artifact denials/allowlists persist.
-`IDLE_HERD_MODEL_AUTO_SHARE=false` disables automatic backend discovery. Destination
+`IDLE_HERD_MODEL_AUTO_SHARE=false` disables automatic model discovery. Destination
 permission/license acceptance, signed TLS RPC, final digest checks and admission
-remain required. Multi-file/MLX/multimodal export is not implemented; do not present
-base weights as a complete unsupported model. These rules supersede older manual
+remain required. Packages bind filenames, roles, sizes, file digests and import
+metadata, transfer resumably without archive extraction, and import through local
+Ollama APIs. MLX destinations require Apple Silicon macOS and compatible Ollama;
+there is no separate native mlx_lm daemon. `IDLE_HERD_MODEL_EXPORTS` maps model names
+to standalone export directories; `IDLE_HERD_OLLAMA_MODELS_DIR` selects a custom
+read-only source store. Real-model/hardware acceptance remains separate from mock
+process tests. Never substitute base weights for a complete multi-file export.
+These rules supersede older manual
 registration/deny-by-default sharing descriptions below and in phase documents.
 
 Native `idle-herd` now defaults to Bonjour/mDNS discovery and automatic LAN trust
@@ -28,8 +35,8 @@ discovery/direct dispatch, worker-local idle policy and optional admin-only Raft
 [Phase 4](docs/idle-herd/phase-4.md), and
 [Phase 5 durable jobs](docs/idle-herd/phase-5.md), and
 [Phase 6 owner controls/menu bar](docs/idle-herd/phase-6.md).
-See [Phase 7 authorized GGUF sharing](docs/idle-herd/phase-7.md) for the implemented
-single-file Ollama adapter, explicit permission, resumable transfers and limits.
+See [Phase 7 model sharing](docs/idle-herd/phase-7.md) for the implemented single-file
+and package Ollama adapters, explicit permission, resumable transfers and limits.
 See [Phase 8 optional admin consensus](docs/idle-herd/phase-8.md) for the separate
 native Go service, explicit bootstrap and voter-loss evidence. Zero voters remains
 the default; no inference or model-sharing path contacts consensus.

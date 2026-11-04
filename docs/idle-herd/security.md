@@ -57,8 +57,9 @@ physical Keychain prompts and native GUI lifecycle remain unverified. Rotation
 currently requires stopping the daemon, replacing its private credentials and
 reimporting the UI credential. See [Phase 6 security and limits](phase-6.md).
 Source sharing now defaults to all authenticated peers for installed readable
-standalone Ollama GGUFs and new registered/imported artifacts, as requested by the
-owner. This includes privately installed/fine-tuned single-file GGUFs; the source
+Ollama GGUF/MLX models, complete multimodal/multi-file packages, configured export
+directories and new registered/imported artifacts, as requested by the owner.
+This includes privately installed/fine-tuned models; the source
 policy no longer requires a separate per-model opt-in. Existing explicit denials
 and allowlists persist; per-chunk revocation still applies. Disable automatic
 backend discovery with `IDLE_HERD_MODEL_AUTO_SHARE=false`, and use per-artifact
@@ -67,7 +68,13 @@ therefore also grants access to default-shared offers. Destination copy permissi
 and license acceptance remain explicit. Signed
 chunks and manifests bind content/metadata; license/provenance claims are authenticated
 to a peer, not certified by the publisher. Protected staging, quotas, source/destination
-throttles and destination-local install locks constrain transfers. Owner consent,
+throttles and destination-local install locks constrain transfers. Package names,
+roles, total size, per-file digests and import metadata are signed/content-bound.
+Offsets address a fixed concatenation; the destination does not extract archives
+or install backend-private directories. Traversal, drive/device names and
+case-folding collisions are rejected before download. Blob and safetensors-index
+references are bounded/validated, and all components are hashed before backend
+uploads. Old peers negotiate only their original offer schema. Owner consent,
 revocation checks per chunk, no-follow source opens on POSIX and final digest checks
 precede publication. Windows reparse-point handling remains best effort.
 See [Phase 7 security and limits](phase-7.md).

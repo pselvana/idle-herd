@@ -113,6 +113,27 @@ class PeerSettings(BaseSettings):
 
     model_transfer_bytes_per_second: int = Field(default=10 * 1024 * 1024, ge=1, le=1024**3)
     model_auto_share: bool = True
+    model_exports: dict[str, str] = Field(default_factory=dict, max_length=128)
+    ollama_models_dir: str | None = None
+
+    @field_validator("model_exports")
+    @classmethod
+    def absolute_exports(cls, value):
+        from pathlib import Path
+
+        if any(not Path(path).expanduser().is_absolute() for path in value.values()):
+            raise ValueError("model_exports must contain absolute export directory paths")
+        return {name: str(Path(path).expanduser()) for name, path in value.items()}
+
+    @field_validator("ollama_models_dir")
+    @classmethod
+    def absolute_models_dir(cls, value):
+        from pathlib import Path
+
+        if value is not None and not Path(value).expanduser().is_absolute():
+            raise ValueError("ollama_models_dir must be absolute")
+        return str(Path(value).expanduser()) if value is not None else None
+
     max_model_cache_bytes: int = Field(default=20 * 1024**3, ge=1)
     model_reserved_disk_bytes: int = Field(default=1024**3, ge=0)
 

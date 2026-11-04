@@ -312,12 +312,18 @@ cli.add_typer(service_cli, name="service")
 
 
 def _control_request(
-    method: str, endpoint: str, payload: dict | None = None, *, prefix: str = "node", render=None
+    method: str,
+    endpoint: str,
+    payload: dict | None = None,
+    *,
+    prefix: str = "node",
+    render=None,
+    timeout: float = 10.0,
 ):
     try:
         credentials = load_or_create_credentials(PeerSettings().data_dir, create=False)
         token = credentials.read_token if method == "GET" else credentials.control_token
-        with httpx.Client(timeout=10.0, trust_env=False) as client:
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
             response = client.request(
                 method,
                 f"http://127.0.0.1:11435/v1/{prefix}/{endpoint}",
@@ -368,6 +374,37 @@ def model_permission(digest: str, permission: Path):
 
     record = SharePermission.model_validate_json(permission.read_bytes())
     _control_request("PUT", f"artifacts/{digest}/permission", record.model_dump(), prefix="models")
+
+
+@models_cli.command("register-directory")
+def model_register_directory(
+    directory: Path,
+    model: str = typer.Option(..., "--model"),
+    format: str = typer.Option("mlx", "--format", help="mlx or gguf-package"),
+    license: str = typer.Option(..., "--license"),
+    provenance: str = typer.Option(..., "--provenance"),
+):
+    """Share a complete standalone export directory without entering file digests."""
+    from fleet_manager.peer.model_packages import directory_artifact
+
+    if format not in {"mlx", "gguf-package"}:
+        raise typer.BadParameter("format must be mlx or gguf-package")
+
+    async def prepare():
+        return await asyncio.to_thread(
+            directory_artifact,
+            directory,
+            model_id=model,
+            format=format,
+            license=license,
+            provenance=provenance,
+        )
+
+    try:
+        artifact = asyncio.run(prepare())
+    except (ValueError, OSError, AdmissionError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    _control_request("POST", "artifacts", artifact.model_dump(), prefix="models", timeout=3600)
 
 
 @models_cli.command("copy")

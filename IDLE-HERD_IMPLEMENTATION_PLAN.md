@@ -879,7 +879,7 @@ restart persistence. This is not physical Quit UI or real-model acceptance.
 
 ### Phase 7 — Peer-to-peer model replication and provisioning
 
-- [x] Build standalone GGUF/Ollama digest inventories, declared OS/CPU/backend-version checks, share permissions and destination disk/RAM budgets. Reject unsupported MLX/CUDA/OCI; full operator/quantization compatibility and real MLX import remain open.
+- [x] Build standalone GGUF/Ollama digest inventories, declared OS/CPU/backend-version checks, share permissions and destination disk/RAM budgets. The November 3 owner-requested extension adds complete MLX/safetensors, multimodal and multi-file packages from installed Ollama models and standalone export directories, with per-file verification, safe relative names and public Ollama import. CUDA/OCI adapters, broad operator/quantization certification and real-weight MLX load acceptance remain open.
 - [x] Implement destination-owned persistent claims/OS locks, authenticated resumable chunks, checksum validation, private staging and verified cache publication after admitted Ollama import/load confirmation. Optional registry fallback is not implemented.
 - [x] Do not require a leader or global lock. Prevent duplicate destination downloads locally; resume exact-manifest content from an authorized source after source loss.
 - [x] Implement managed cache limits, privacy/license controls, preferred-source selection and live inventory reconciliation on peer return. No automatic eviction of manual/pinned models.

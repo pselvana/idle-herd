@@ -400,6 +400,18 @@ def create_peer_app(
                 metadata = await backend.client.post("/api/show", json={"model": manifest.model_id})
                 metadata.raise_for_status()
                 capabilities = metadata.json().get("capabilities", [])
+                if (
+                    manifest.format == "mlx"
+                    and metadata.json().get("details", {}).get("format") != "safetensors"
+                ):
+                    return False
+                if (
+                    manifest.files is not None
+                    and manifest.ollama
+                    and manifest.ollama.capabilities
+                    and not set(manifest.ollama.capabilities).issubset(capabilities)
+                ):
+                    return False
                 embedding = "embedding" in capabilities and "completion" not in capabilities
                 await refresh_local(app)
                 lease = await ledger.acquire(AcquireRequest(model=manifest.model_id, wait_ms=0))
@@ -420,6 +432,16 @@ def create_peer_app(
                                 "prompt": "",
                                 "stream": False,
                                 "options": {"num_predict": 1},
+                                **(
+                                    {
+                                        "images": [
+                                            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC"
+                                        ],
+                                        "prompt": "Describe this image briefly.",
+                                    }
+                                    if "vision" in capabilities
+                                    else {}
+                                ),
                             },
                             timeout=120,
                         )
@@ -458,6 +480,8 @@ def create_peer_app(
                 reserved_bytes=settings.model_reserved_disk_bytes,
                 reserve_memory_bytes=int(settings.reserve_memory_gb * 1e9),
                 discover_installed=settings.model_auto_share,
+                model_exports=settings.model_exports,
+                ollama_models_dir=settings.ollama_models_dir,
             )
             await sharing.open()
             stack.push_async_callback(sharing.close)
