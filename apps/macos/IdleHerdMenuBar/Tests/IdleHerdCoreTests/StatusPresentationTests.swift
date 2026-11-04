@@ -7,10 +7,83 @@ final class StatusPresentationTests: XCTestCase {
         let peer: [String: Any] = ["state": "running", "peer_origin": true]
         for (leases, left, right) in [([], false, false), ([local], true, false),
                                      ([peer], false, true), ([local, peer], true, true)] {
-            let activity = MenuBarActivity(workerLeases: leases, current: true)
+            let activity = MenuBarActivity(workerLeases: leases, connectedRemoteHosts: 1, current: true)
             XCTAssertEqual(activity.localExecuting, left)
             XCTAssertEqual(activity.peerExecuting, right)
+            XCTAssertEqual(activity.rightLlama, right ? .incoming : .outline)
         }
+    }
+
+    func testOutgoingExecutionUsesGrayUnlessIncomingExecutionIsAlsoPresent() {
+        let local: [String: Any] = ["state": "running", "peer_origin": false]
+        let peer: [String: Any] = ["state": "running", "peer_origin": true]
+        let outgoing = MenuBarActivity(workerLeases: [local], connectedRemoteHosts: 2,
+                                       outboundRunning: 1, current: true)
+        XCTAssertTrue(outgoing.localExecuting)
+        XCTAssertEqual(outgoing.rightLlama, .outgoing)
+        XCTAssertTrue(outgoing.accessibilityDescription.contains("executing on a remote host"))
+        let both = MenuBarActivity(workerLeases: [peer], connectedRemoteHosts: 2,
+                                  outboundRunning: 1, current: true)
+        XCTAssertEqual(both.rightLlama, .incoming)
+        XCTAssertTrue(both.remoteExecuting)
+        XCTAssertTrue(both.accessibilityDescription.contains("Peer work executing on this Mac"))
+        XCTAssertTrue(both.accessibilityDescription.contains("executing on a remote host"))
+    }
+
+    func testNoConnectedPeersHidesRightLlamaEvenWithExecutingWork() {
+        let leases: [[String: Any]] = [["state": "running", "peer_origin": false],
+                                      ["state": "running", "peer_origin": true]]
+        let solo = MenuBarActivity(workerLeases: leases, connectedRemoteHosts: 0,
+                                  outboundRunning: 1, current: true)
+        XCTAssertTrue(solo.localExecuting)
+        XCTAssertEqual(solo.rightLlama, .hidden)
+        XCTAssertTrue(solo.accessibilityDescription.contains("No remote hosts connected"))
+        let stale = MenuBarActivity(workerLeases: leases, connectedRemoteHosts: 2,
+                                   outboundRunning: 1, current: false)
+        XCTAssertFalse(stale.localExecuting)
+        XCTAssertFalse(stale.peerExecuting)
+        XCTAssertFalse(stale.remoteExecuting)
+        XCTAssertEqual(stale.rightLlama, .hidden)
+    }
+
+    func testOlderDaemonRemoteJobsRequireLocalOriginAndDistinctExecutingWorker() {
+        let remote: [String: Any] = ["state": "running", "origin_worker_id": "here", "worker_id": "there"]
+        func activity(_ jobs: [[String: Any]], fresh: Bool = true, count: Int? = nil) -> MenuBarActivity {
+            MenuBarActivity(workerLeases: [], originJobs: jobs, localWorkerID: "here",
+                            connectedRemoteHosts: 1, outboundRunning: count, current: true,
+                            originJobsCurrent: fresh)
+        }
+        XCTAssertEqual(activity([remote]).rightLlama, .outgoing)
+        XCTAssertEqual(activity([remote], fresh: false).rightLlama, .outline)
+        // The new stream observation supersedes a journal's pre-dispatch running state.
+        XCTAssertEqual(activity([remote], count: 0).rightLlama, .outline)
+        for job in [
+            ["state": "queued", "origin_worker_id": "here", "worker_id": "there"],
+            ["state": "unknown_outcome", "origin_worker_id": "here", "worker_id": "there"],
+            ["state": "completed", "origin_worker_id": "here", "worker_id": "there"],
+            ["state": "running", "origin_worker_id": "here", "worker_id": "here"],
+            ["state": "running", "origin_worker_id": "someone-else", "worker_id": "there"],
+            ["state": "running", "origin_worker_id": "here"],
+            ["state": "running", "worker_id": "there"],
+        ] {
+            XCTAssertEqual(activity([job]).rightLlama, .outline)
+        }
+    }
+
+    func testMissingLeaseDetailsDoNotHideFreshPeersOrRemoteObservation() {
+        let activity = MenuBarActivity(workerLeases: [["state": "running", "peer_origin": true]],
+                                       connectedRemoteHosts: 1, outboundRunning: 1, current: true,
+                                       workerLeasesCurrent: false, originJobsCurrent: false)
+        XCTAssertFalse(activity.peerExecuting)
+        XCTAssertEqual(activity.rightLlama, .outgoing)
+    }
+
+    func testOutboundStatusIsOptionalAndRejectsNegativeObservations() throws {
+        XCTAssertNil(try snapshot().outbound_running)
+        let view = try snapshot(["outbound_running": 2, "worker_id": "here"])
+        XCTAssertEqual(view.outbound_running, 2)
+        XCTAssertEqual(view.worker_id, "here")
+        XCTAssertThrowsError(try snapshot(["outbound_running": -1]))
     }
 
     func testMenuBarDoesNotLightForUncertainNonrunningOrStaleWork() {

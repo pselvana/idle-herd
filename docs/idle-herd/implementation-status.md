@@ -1,9 +1,53 @@
 # Idle-Herd implementation status
 
-## Menu bar llama activity icon — November 3, 2026
+## Remote execution and single-host menu icon — November 3, 2026
+
+The right llama now fills gray for this host’s work executing remotely, retains
+the normal solid menu bar tint for incoming peer work, and remains outlined when
+peers are connected without either activity. Incoming takes visual priority when
+both directions run; accessibility names both. No reachable remote peers removes
+the right llama and shrinks the artwork from 31 to 15 points. Stale/disconnected
+status shows only an outlined left llama. The local-origin execution fill on the
+left remains independent. Missing job details cannot revive cached execution.
+
+Added an aggregate, authenticated `outbound_running` owner status/event observation
+for ordinary forwarded API requests as well as durable jobs. It counts execution
+requests in flight under authenticated worker grants, including waiting for
+non-streaming response headers; it decrements synchronously on rejection and
+all exits (including cancellation), and resets on daemon startup. It neither
+persists execution authority nor frees uncertain worker work. Updated clients use
+this count when present; older daemons fall back to fresh journaled running jobs
+with explicit local-origin and distinct execution-worker identities. Raw forwarded
+requests on older daemons remain unobservable. Activate the new observation by
+restarting the daemon when safe, then reopen the rebuilt companion. No live daemon
+or backend was restarted during this change.
+
+Verification: **24 Swift package tests passed** (including remote/solo/overlap,
+stale and unknown provenance cases); **85 focused Python tests passed** across
+origin activity, owner API, peer RPC, waiters, durable jobs, capacity integration
+and transport. The 10 new origin activity cases cover concurrent completion,
+cancellation, incomplete streams, downstream failures, authenticated declines,
+signature rejection, unreachable peers, and non-streaming pre-header completion
+and cancellation. A native two-peer test initially hit
+the sandbox’s denied loopback bind; its approved isolated rerun passed. Logs:
+`/private/tmp/idle-herd-outbound-swift.log` and
+`/private/tmp/idle-herd-outbound-final-python.log`. Ruff lint/format checks and
+`git diff --check` passed.
+
+Offscreen native rendering was inspected at actual and enlarged sizes in light
+and dark appearance, including solo idle/local, peer idle, local/incoming/outgoing,
+overlap and stale states. Xcode `build-for-testing` compiled the app/UI test target;
+UI automation and physical menu bar/VoiceOver interaction remain unverified. The
+unsigned app was repackaged at `apps/macos/IdleHerdMenuBar/build/Idle-Herd.app`.
+No admission, lease, retry, port or peer RPC changes, real inference, full Python
+suite or release publication occurred.
+
+## Initial menu bar llama activity icon — November 3, 2026
 
 Replaced the grid/disconnection symbol with vector template artwork matching the
-owner’s two-llama/bidirectional-arrow reference. Idle shows two outlines. Running
+owner’s two-llama reference. A follow-up removes the connecting arrows and places
+the llamas shoulder to shoulder, reducing the artwork from 44 to 31 points wide
+while retaining its 18-point height. Idle shows two outlines. Running
 local-origin worker leases fill the left llama; running peer-origin leases on this
 Mac fill the right. Both fills operate independently, including while existing
 execution drains in a manual mode. Reserved/quarantined work and origin jobs
@@ -20,6 +64,8 @@ automation was not executed. Packaged the unsigned local development app at
 `apps/macos/IdleHerdMenuBar/build/Idle-Herd.app`. Live inference and physical menu
 bar/VoiceOver interaction remain unverified. No daemon, backend, admission or
 protocol changes were made; no release was published.
+The compact follow-up passed the same 19 package tests, was inspected in all four
+activity states in light/dark renders, and was repackaged at the same app path.
 
 ## Preferences window refresh — November 3, 2026
 

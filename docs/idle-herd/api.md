@@ -86,6 +86,15 @@ diagnostics. Job history adds effective durability, acknowledged copy count,
 attempt count and duplicate consent. Worker leases add lease ID, hashed request
 correlation and incarnation/generation; reservation bearer tokens are excluded.
 
+`outbound_running` is a nonnegative origin-local count of remote execution requests
+in flight under authenticated worker grants, including ordinary forwarded API
+requests, durable jobs and time waiting for non-streaming response headers. It is
+included in owner status and sampled events, without prompts, tokens or request IDs.
+The observation ends on response close, rejection, error or cancellation and resets
+on process startup; it is neither durable worker
+authority nor proof that uncertain remote computation has stopped. It does not
+alter admission, grants, retries or quarantine.
+
 Node status and peer details include optional `hostname`. Job summaries include
 `origin_worker_id`, `origin_host` and `execution_host`; worker leases include
 `origin_worker_id` and `origin_host`. Origins come from the authenticated peer

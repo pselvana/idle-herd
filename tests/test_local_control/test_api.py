@@ -137,6 +137,10 @@ async def test_scopes_and_redacted_status(tmp_path):
         assert response.status_code == 200
         assert response.json()["idle"]["reason"] == "activity_unknown"
         assert response.json()["resources"]["cpu_percent"] is None
+        assert response.json()["outbound_running"] == 0
+        app.state.outbound_running = 2
+        updated = await client.get("/v1/node/status", headers=read)
+        assert updated.json()["outbound_running"] == 2
         assert app.state.control_credentials.read_token not in response.text
         assert app.state.control_credentials.control_token not in response.text
 

@@ -312,6 +312,7 @@ def create_peer_app(
             app.state.mlx_proxy = None
             app.state.context_compactor = None
             app.state.identity = None
+            app.state.outbound_running = 0
             app.state.directory = None
             app.state.peer_error = None
             app.state.peer_task = None

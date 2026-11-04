@@ -34,6 +34,14 @@ that environment or working directory changes.
 
 The menu shows authoritative local running lease count, reservations and
 quarantine separately; origin jobs include their last known executing worker.
+The compact menu bar icon shows a left llama for local-origin execution on this
+Mac. Its right llama is outlined with connected peers, gray-filled for outgoing
+execution, and filled in the menu bar tint for incoming execution (incoming takes
+priority during overlap). No reachable peers removes the right llama entirely.
+The new `outbound_running` observation covers ordinary forwarded requests as well
+as durable jobs; older daemons fall back to journaled remote jobs only. Stale
+status clears fills and hides the right llama. These are presentation observations,
+not admission or remote-completion authority.
 Resource observations include provenance/age and unknown values. Unoccupied
 slots are a budget observation, not proof of model fit. Cluster reachability
 is a local estimate; remote slot counts stay unknown without a measured view.

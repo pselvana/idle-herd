@@ -15,12 +15,24 @@ daemon. The app connects only to `127.0.0.1:11435`.
 
 The UI polls status alongside the event stream, and shows disconnected/stale
 when the daemon cannot be reached. The displayed cluster view is an estimate.
-The menu bar uses two llama outlines joined by a bidirectional arrow. The left
-llama fills for local-origin work executing on this Mac; the right fills for
-peer-origin work executing on this Mac. Both can fill together. Only running
-worker leases count: reservations, quarantines and jobs forwarded to another
-machine do not light either llama. Disconnected/stale status or unavailable job
-details clears the fills. Template artwork follows the system menu bar tint.
+The menu bar uses two llamas shoulder to shoulder. The left fills for local-origin
+work executing on this Mac. With remote hosts connected, the right is outlined
+when idle, fills gray for this Mac’s work executing remotely, and fills with the
+normal menu bar tint for peer-origin work executing on this Mac. Incoming work
+takes visual priority if both directions are active; accessibility describes both.
+With no reachable remote hosts, the right llama is removed and the icon shrinks
+from 31 to 15 points wide. Stale/disconnected status also shows one outlined llama.
+Reservations and quarantines do not light the icon. Template artwork follows the
+system menu bar tint, with half-opacity gray for outgoing work.
+
+Updated daemons expose `outbound_running` in authenticated status/events to observe
+ordinary forwarded API requests and durable jobs while execution under a signed
+worker grant is in flight, including the wait for non-streaming response headers.
+Completion, rejection, errors and cancellation clear that observation without
+changing worker leases or quarantine. Restart the
+daemon when safe and reopen the rebuilt app to enable this addition. Older daemons
+fall back to fresh journaled jobs with explicit local-origin and remote-worker
+identities; their ordinary forwarded API requests have no activity observation.
 CPU/GPU usage and memory use bounded precision and explicit units; power is labeled
 as adapter or battery. Unsupported metrics appear as **Not reported**, with help
 explaining sensor limitations. Missing values never imply zero usage or eligibility.

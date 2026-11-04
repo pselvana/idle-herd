@@ -259,6 +259,7 @@ def create_router() -> APIRouter:
             platform=local_platform,
             peer_details=details,
             waiters=waiters.pending_count() if waiters else 0,
+            outbound_running=getattr(state, "outbound_running", 0),
             job_history=sorted(jobs.jobs, key=lambda item: item.updated_at, reverse=True)[:50],
             worker_leases=leases,
             notifications_enabled=getattr(settings, "notifications_enabled", False),
@@ -469,6 +470,7 @@ def create_router() -> APIRouter:
                         ("peer_details", "peer"),
                         ("job_history", "job"),
                         ("waiters", "capacity"),
+                        ("outbound_running", "job"),
                     ):
                         if comparison[field] != previous[field]:
                             kind = event_type

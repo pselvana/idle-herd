@@ -497,12 +497,20 @@ class OriginDispatch:
         started = False
         complete = False
         status = 502
+        # Presentation only: an outgoing execution under an authenticated grant
+        # is in flight even before response headers (non-streaming inference may
+        # send none until it finishes). This never grants or releases capacity.
+        self.local.state.outbound_running += 1
+        observed_running = True
         try:
             async with self.local.state.peer_client.stream(
                 "POST", peer.endpoint + path, content=body, headers=headers
             ) as resp:
                 identity.verify_stream_response(headers["x-idle-nonce"], resp, peer.worker_id)
                 status = resp.status_code
+                if not 200 <= status < 300:
+                    self.local.state.outbound_running -= 1
+                    observed_running = False
                 forwarded = [
                     (k.encode(), v.encode())
                     for k, v in resp.headers.items()
@@ -521,6 +529,8 @@ class OriginDispatch:
             # protocol terminal or retrying an execution of uncertain outcome.
             raise RuntimeError("Remote stream ended with an unknown execution outcome") from None
         finally:
+            if observed_running:
+                self.local.state.outbound_running -= 1
             await self.local.state.trace_store.record_trace(
                 request_id=request_id,
                 model=normalize_model_name(payload["model"]),

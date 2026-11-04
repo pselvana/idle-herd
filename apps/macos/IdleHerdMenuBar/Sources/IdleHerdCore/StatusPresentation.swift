@@ -1,23 +1,53 @@
 import Foundation
 
-/// Only worker-local, confirmed running leases light the menu bar llamas.
+/// Execution location and fresh peer reachability drive the menu bar artwork.
 public struct MenuBarActivity: Equatable {
+    public enum RightLlama: Int, CaseIterable {
+        case hidden, outline, incoming, outgoing
+    }
+
     public let localExecuting: Bool
     public let peerExecuting: Bool
+    public let remoteExecuting: Bool
+    public let hasConnectedPeers: Bool
 
-    public init(workerLeases: [[String: Any]], current: Bool) {
-        let running = current ? workerLeases.filter { $0["state"] as? String == "running" } : []
+    public init(workerLeases: [[String: Any]], originJobs: [[String: Any]] = [],
+                localWorkerID: String? = nil, connectedRemoteHosts: Int = 0,
+                outboundRunning: Int? = nil, current: Bool,
+                workerLeasesCurrent: Bool = true, originJobsCurrent: Bool = true) {
+        let running = current && workerLeasesCurrent ? workerLeases.filter { $0["state"] as? String == "running" } : []
         localExecuting = running.contains { ($0["peer_origin"] as? Bool) == false }
         peerExecuting = running.contains { ($0["peer_origin"] as? Bool) == true }
+        hasConnectedPeers = current && connectedRemoteHosts > 0
+        if let outboundRunning {
+            remoteExecuting = current && outboundRunning > 0
+        } else {
+            // Older daemons only expose journaled origin jobs. Require explicit
+            // worker identities; a missing location cannot imply remote execution.
+            remoteExecuting = current && originJobsCurrent && originJobs.contains { job in
+                guard let localWorkerID, !localWorkerID.isEmpty,
+                      job["state"] as? String == "running",
+                      job["origin_worker_id"] as? String == localWorkerID,
+                      let worker = job["worker_id"] as? String, !worker.isEmpty else { return false }
+                return worker != localWorkerID
+            }
+        }
+    }
+
+    public var rightLlama: RightLlama {
+        guard hasConnectedPeers else { return .hidden }
+        if peerExecuting { return .incoming }
+        return remoteExecuting ? .outgoing : .outline
     }
 
     public var accessibilityDescription: String {
-        switch (localExecuting, peerExecuting) {
-        case (false, false): return "No confirmed execution on this Mac"
-        case (true, false): return "Local work executing on this Mac"
-        case (false, true): return "Peer work executing on this Mac"
-        case (true, true): return "Local and peer work executing on this Mac"
-        }
+        var descriptions: [String] = []
+        if localExecuting { descriptions.append("Local work executing on this Mac") }
+        if peerExecuting { descriptions.append("Peer work executing on this Mac") }
+        if remoteExecuting { descriptions.append("Work from this Mac executing on a remote host") }
+        if descriptions.isEmpty { descriptions.append("No confirmed execution") }
+        if !hasConnectedPeers { descriptions.append("No remote hosts connected") }
+        return descriptions.joined(separator: ", ")
     }
 }
 

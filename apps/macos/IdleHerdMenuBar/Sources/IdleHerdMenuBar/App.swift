@@ -9,6 +9,7 @@ import IdleHerdCore
     @Published var jobs: [[String: Any]] = []
     @Published private(set) var jobsCurrent = false
     @Published var originJobs: [[String: Any]] = []
+    @Published private(set) var originJobsCurrent = false
     @Published var inventory: [ModelInventoryItem] = []
     @Published var transfers: [ModelTransfer] = []
     @Published var sharingError: String?
@@ -75,9 +76,11 @@ import IdleHerdCore
                     jobs = (jobSnapshot["worker_leases"] as? [[String: Any]]) ?? []
                     jobsCurrent = jobSnapshot["worker_leases"] is [[String: Any]]
                     originJobs = (jobSnapshot["jobs"] as? [[String: Any]]) ?? []
+                    originJobsCurrent = jobSnapshot["jobs"] is [[String: Any]]
                     jobsError = nil
                 } catch {
                     jobsCurrent = false
+                    originJobsCurrent = false
                     jobsError = "Job details unavailable: \(error.localizedDescription)"
                 }
             }
@@ -93,6 +96,7 @@ import IdleHerdCore
         let validated = try NodeSnapshot.decode(object)
         snapshot = validated; status = object
         jobsCurrent = object["worker_leases"] is [[String: Any]]
+        originJobsCurrent = object["job_history"] is [[String: Any]]
         if let leases = object["worker_leases"] as? [[String: Any]] { jobs = leases }
         if let history = object["job_history"] as? [[String: Any]] { originJobs = history }
         if object["worker_leases"] != nil && object["job_history"] != nil { jobsError = nil }
@@ -147,7 +151,11 @@ import IdleHerdCore
     }
     var count: String { connected ? snapshot.map { String($0.slots.running) } ?? "—" : "—" }
     var menuBarActivity: MenuBarActivity {
-        MenuBarActivity(workerLeases: jobs, current: connected && jobsCurrent)
+        MenuBarActivity(workerLeases: jobs, originJobs: originJobs,
+                        localWorkerID: snapshot?.worker_id,
+                        connectedRemoteHosts: snapshot?.peers?.reachable ?? 0,
+                        outboundRunning: snapshot?.outbound_running, current: connected,
+                        workerLeasesCurrent: jobsCurrent, originJobsCurrent: originJobsCurrent)
     }
     var presentation: StatusPresentation { StatusPresentation(snapshot) }
     var availableSlots: String {

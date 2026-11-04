@@ -201,6 +201,8 @@ public struct NodeSnapshot: Decodable {
         public let observed_available_slots: Int?
     }
     public let version: Int
+    public let worker_id: String?
+    public let outbound_running: Int?
     public let mode: Mode
     public let slots: Slots
     public let idle: Idle
@@ -214,7 +216,8 @@ public struct NodeSnapshot: Decodable {
         let snapshot = try JSONDecoder().decode(NodeSnapshot.self, from: data)
         guard snapshot.version == 1, ["auto", "draining", "offline", "paused"].contains(snapshot.mode.mode),
               snapshot.slots.running >= 0, snapshot.slots.total >= 0,
-              snapshot.slots.occupied >= snapshot.slots.running else { throw ClientError.invalidResponse }
+              snapshot.slots.occupied >= snapshot.slots.running,
+              (snapshot.outbound_running ?? 0) >= 0 else { throw ClientError.invalidResponse }
         return snapshot
     }
 }

@@ -3,34 +3,31 @@ import IdleHerdCore
 
 /// Vector template artwork stays sharp at menu bar scale and follows macOS tint.
 enum HerdMenuBarIcon {
-    private static let images: [NSImage] = (0..<4).map { state in
-        let image = NSImage(size: NSSize(width: 44, height: 18), flipped: false) { _ in
+    private static let images: [NSImage] = (0..<8).map { state in
+        let right = MenuBarActivity.RightLlama(rawValue: state >> 1)!
+        let image = NSImage(size: NSSize(width: right == .hidden ? 15 : 31, height: 18), flipped: false) { _ in
             NSColor.black.set()
             drawLlama(at: 0, filled: state & 1 != 0)
-            drawLlama(at: 29, filled: state & 2 != 0)
-
-            let arrow = NSBezierPath()
-            arrow.move(to: NSPoint(x: 18, y: 7.5))
-            arrow.line(to: NSPoint(x: 26, y: 7.5))
-            arrow.move(to: NSPoint(x: 20.2, y: 9.7))
-            arrow.line(to: NSPoint(x: 18, y: 7.5))
-            arrow.line(to: NSPoint(x: 20.2, y: 5.3))
-            arrow.move(to: NSPoint(x: 23.8, y: 9.7))
-            arrow.line(to: NSPoint(x: 26, y: 7.5))
-            arrow.line(to: NSPoint(x: 23.8, y: 5.3))
-            arrow.lineWidth = 1.5
-            arrow.lineCapStyle = .round
-            arrow.lineJoinStyle = .round
-            arrow.stroke()
+            if right != .hidden {
+                let context = NSGraphicsContext.current!.cgContext
+                context.saveGState()
+                // Template images preserve alpha. Composite the whole silhouette
+                // once so fill/stroke overlap does not darken the gray state's edge.
+                context.setAlpha(right == .outgoing ? 0.5 : 1)
+                context.beginTransparencyLayer(auxiliaryInfo: nil)
+                drawLlama(at: 16, filled: right != .outline)
+                context.endTransparencyLayer()
+                context.restoreGState()
+            }
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "Two llamas connected by a bidirectional arrow"
+        image.accessibilityDescription = right == .hidden ? "One llama" : "Two llamas shoulder to shoulder"
         return image
     }
 
     static func image(for activity: MenuBarActivity) -> NSImage {
-        images[(activity.localExecuting ? 1 : 0) | (activity.peerExecuting ? 2 : 0)]
+        images[(activity.localExecuting ? 1 : 0) | (activity.rightLlama.rawValue << 1)]
     }
 
     private static func drawLlama(at offset: CGFloat, filled: Bool) {

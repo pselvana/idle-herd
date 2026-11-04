@@ -156,6 +156,7 @@ class NodeStatus(Strict):
     worker_incarnation: str | None = None
     platform: str = "unknown"
     waiters: int = 0
+    outbound_running: int = Field(default=0, ge=0)
     peer_details: list["PeerDetail"] = Field(default_factory=list)
     job_history: list["JobSummary"] = Field(default_factory=list)
     worker_leases: list["WorkerLease"] = Field(default_factory=list)
