@@ -426,6 +426,7 @@ def create_peer_app(
                 max_bytes=settings.max_model_cache_bytes,
                 reserved_bytes=settings.model_reserved_disk_bytes,
                 reserve_memory_bytes=int(settings.reserve_memory_gb * 1e9),
+                discover_installed=settings.model_auto_share,
             )
             await sharing.open()
             stack.push_async_callback(sharing.close)

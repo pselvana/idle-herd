@@ -67,8 +67,12 @@ to review license/provenance and confirm consent. Model digests and peer identit
 are filled internally. Changing the selection or refreshing requires fresh consent;
 retry is limited to the original model revision. Empty catalogs, unreachable peers
 and failed starts have distinct states. Reopen the rebuilt app and update/restart
-the daemon when safe to enable the peer-specific inventory request. Models must
-still be registered and explicitly shared by the source owner.
+the daemon when safe to enable the peer-specific inventory request. Installed
+readable standalone Ollama GGUFs now appear automatically and are shared with
+authenticated peers by default, including new registrations/imported copies.
+Existing per-model sharing restrictions persist. Disable automatic backend discovery
+with `IDLE_HERD_MODEL_AUTO_SHARE=false`. Multimodal, adapter/multi-file and MLX
+exports remain unsupported; they are not shown as copyable base-weight substitutes.
 
 Preferences opens on demand in a separate window with **General**, **Daemon
 Policy**, **Power & Limits**, and **Security & RPC** tabs. Grouped cards adapt to

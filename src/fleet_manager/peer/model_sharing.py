@@ -1,4 +1,4 @@
-"""Explicitly authorized, content-verified GGUF sharing and local Ollama import.
+"""Default-shared, content-verified GGUF offers and local Ollama import.
 
 Partial files and install ownership survive daemon restarts. A partial is never an
 inventory item, and neither peer identities nor paths supplied over the wire select
@@ -24,7 +24,7 @@ from typing import Annotated
 
 import httpx
 import psutil
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_serializer
 
 from fleet_manager.peer.models import AdmissionError
 
@@ -39,6 +39,12 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class OllamaImportOptions(StrictModel):
+    template: str | None = Field(default=None, max_length=65536)
+    system: str | None = Field(default=None, max_length=65536)
+    parameters: dict[str, JsonValue] = Field(default_factory=dict, max_length=128)
+
+
 class ArtifactManifest(StrictModel):
     model_id: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.:/-]*$")
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -47,12 +53,21 @@ class ArtifactManifest(StrictModel):
     backend: str = Field(default="ollama", min_length=1, max_length=64)
     quantization: str = Field(min_length=1, max_length=64)
     provenance: str = Field(min_length=1, max_length=512)
-    license: str = Field(min_length=1, max_length=256)
+    license: str = Field(min_length=1, max_length=65536)
     required_memory_bytes: int = Field(gt=0, le=2**63 - 1)
     required_os: str | None = Field(default=None, max_length=32)
     required_cpu: str | None = Field(default=None, max_length=32)
     minimum_backend_version: str | None = Field(default=None, pattern=r"^\d+\.\d+\.\d+$")
     manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    ollama: OllamaImportOptions | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler):
+        value = handler(self)
+        # Preserve canonical digests and wire shape for existing standalone offers.
+        if self.ollama is None:
+            value.pop("ollama", None)
+        return value
 
     def calculated_digest(self) -> str:
         return _sha(
@@ -69,10 +84,18 @@ class LocalArtifact(StrictModel):
     manifest: ArtifactManifest
     path: str = Field(min_length=1, max_length=4096)
     allowed_peers: list[Annotated[str, Field(min_length=1, max_length=128)]] = Field(
-        default_factory=list, max_length=128
+        default_factory=lambda: ["*"], max_length=128
     )
-    sharing_enabled: bool = False
-    license_approved: bool = False
+    sharing_enabled: bool = True
+    license_approved: bool = True
+    discovered: bool = False
+
+    def permits(self, principal: str) -> bool:
+        return (
+            self.sharing_enabled
+            and self.license_approved
+            and ("*" in self.allowed_peers or principal in self.allowed_peers)
+        )
 
 
 class ChunkRequest(StrictModel):
@@ -162,6 +185,7 @@ class ModelSharing:
         transport: httpx.AsyncBaseTransport | None = None,
         load_confirm: Callable[[ArtifactManifest], Awaitable[bool]] | None = None,
         bytes_per_second: int = 10 * 1024 * 1024,
+        discover_installed: bool = False,
     ):
         self.directory = Path(directory)
         self.max_bytes = max_bytes
@@ -182,6 +206,11 @@ class ModelSharing:
         self._source_guard = asyncio.Lock()
         self._source_pending = 0
         self._source_next = 0.0
+        self.catalog = None
+        if discover_installed:
+            from fleet_manager.peer.ollama_catalog import OllamaCatalog
+
+            self.catalog = OllamaCatalog(self.client)
 
     @contextmanager
     def _db(self):
@@ -240,6 +269,8 @@ class ModelSharing:
             for task in tasks:
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        if self.catalog is not None:
+            await self.catalog.close()
         await self.client.aclose()
         if self._lock_file is not None:
             self._lock_file.close()
@@ -299,6 +330,7 @@ class ModelSharing:
             raise AdmissionError("sharing_permission_required", 403)
         if len(allowed_peers) > 128 or any(not peer or len(peer) > 128 for peer in allowed_peers):
             raise AdmissionError("invalid_peer_permissions", 400)
+        automatic = {item.manifest.digest: item for item in await self._automatic_artifacts()}
 
         def update():
             with self._db() as db:
@@ -306,52 +338,69 @@ class ModelSharing:
                     "SELECT record FROM artifacts WHERE digest=?", (digest,)
                 ).fetchone()
                 if row is None:
-                    raise AdmissionError("artifact_not_found", 404)
-                artifact = LocalArtifact.model_validate_json(row[0])
+                    if digest not in automatic:
+                        raise AdmissionError("artifact_not_found", 404)
+                    artifact = automatic[digest]
+                else:
+                    artifact = LocalArtifact.model_validate_json(row[0])
                 artifact.allowed_peers = allowed_peers
                 artifact.sharing_enabled = sharing_enabled
                 artifact.license_approved = license_approved
                 db.execute(
-                    "UPDATE artifacts SET record=? WHERE digest=?",
-                    (artifact.model_dump_json(), digest),
+                    "INSERT OR REPLACE INTO artifacts (digest, record) VALUES (?, ?)",
+                    (digest, artifact.model_dump_json()),
                 )
 
         await asyncio.to_thread(update)
 
-    async def inventory(self, principal: str | None = None) -> list[ArtifactManifest]:
+    async def _automatic_artifacts(self, *, wait: bool = True) -> list[LocalArtifact]:
+        return await self.catalog.artifacts(wait=wait) if self.catalog is not None else []
+
+    async def _artifacts(self, *, wait: bool = True) -> dict[str, LocalArtifact]:
+        automatic = {
+            item.manifest.digest: item for item in await self._automatic_artifacts(wait=wait)
+        }
+
         def read():
-            result = []
+            result = automatic.copy()
             with self._db() as db:
                 for row in db.execute("SELECT record FROM artifacts"):
                     item = LocalArtifact.model_validate_json(row[0])
-                    if principal is None or (
-                        item.sharing_enabled
-                        and item.license_approved
-                        and principal in item.allowed_peers
-                    ):
-                        result.append(item.manifest)
-                        if principal is not None and len(result) == 128:
-                            break
+                    if item.discovered:
+                        current = automatic.get(item.manifest.digest)
+                        if current is None:
+                            continue
+                        item = current.model_copy(
+                            update={
+                                "allowed_peers": item.allowed_peers,
+                                "sharing_enabled": item.sharing_enabled,
+                                "license_approved": item.license_approved,
+                            }
+                        )
+                    result[item.manifest.digest] = item
             return result
 
         return await asyncio.to_thread(read)
 
-    async def _artifact(self, principal: str, digest: str) -> LocalArtifact:
-        def read():
-            with self._db() as db:
-                return db.execute(
-                    "SELECT record FROM artifacts WHERE digest=?", (digest,)
-                ).fetchone()
+    async def inventory(self, principal: str | None = None) -> list[ArtifactManifest]:
+        items = (await self._artifacts(wait=principal is not None)).values()
+        result = [item.manifest for item in items if principal is None or item.permits(principal)]
+        if principal is None:
+            return result
+        # Full licenses/templates can be much larger than legacy standalone
+        # metadata. Keep the signed inventory inside the existing RPC budget.
+        bounded = []
+        size = 32
+        for item in result[:128]:
+            size += len(item.model_dump_json().encode()) + 1
+            if size > 2 * CHUNK_SIZE - 1024:
+                break
+            bounded.append(item)
+        return bounded
 
-        row = await asyncio.to_thread(read)
-        if row is None:
-            raise AdmissionError("artifact_not_found", 404)
-        item = LocalArtifact.model_validate_json(row[0])
-        if (
-            not item.sharing_enabled
-            or not item.license_approved
-            or principal not in item.allowed_peers
-        ):
+    async def _artifact(self, principal: str, digest: str) -> LocalArtifact:
+        item = (await self._artifacts()).get(digest)
+        if item is None or not item.permits(principal):
             raise AdmissionError("artifact_not_found", 404)
         return item
 
@@ -743,6 +792,7 @@ class ModelSharing:
         else:
             response = await self.client.post("/api/blobs/" + digest, content=content())
             response.raise_for_status()
+            options = manifest.ollama.model_dump(exclude_none=True) if manifest.ollama else {}
             response = await self.client.post(
                 "/api/create",
                 json={
@@ -750,6 +800,7 @@ class ModelSharing:
                     "files": {"model.gguf": digest},
                     "stream": False,
                     "license": manifest.license,
+                    **options,
                 },
             )
             response.raise_for_status()

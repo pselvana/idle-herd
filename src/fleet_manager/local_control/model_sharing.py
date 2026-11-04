@@ -28,9 +28,9 @@ class TransferConsent(BaseModel):
 
 class SharePermission(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    allowed_peers: list[str] = Field(default_factory=list, max_length=128)
+    allowed_peers: list[str] = Field(default_factory=lambda: ["*"], max_length=128)
     sharing_enabled: bool = False
-    license_approved: bool = False
+    license_approved: bool = True
 
 
 async def transfer_summaries(manager):

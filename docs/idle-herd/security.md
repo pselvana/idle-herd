@@ -56,7 +56,15 @@ this is not protection from malicious same-user code. Windows ACL enforcement,
 physical Keychain prompts and native GUI lifecycle remain unverified. Rotation
 currently requires stopping the daemon, replacing its private credentials and
 reimporting the UI credential. See [Phase 6 security and limits](phase-6.md).
-Phase 7 source sharing is deny-by-default per destination and artifact. Signed
+Source sharing now defaults to all authenticated peers for installed readable
+standalone Ollama GGUFs and new registered/imported artifacts, as requested by the
+owner. This includes privately installed/fine-tuned single-file GGUFs; the source
+policy no longer requires a separate per-model opt-in. Existing explicit denials
+and allowlists persist; per-chunk revocation still applies. Disable automatic
+backend discovery with `IDLE_HERD_MODEL_AUTO_SHARE=false`, and use per-artifact
+permissions to restrict registered/imported offers. Native automatic LAN trust
+therefore also grants access to default-shared offers. Destination copy permission
+and license acceptance remain explicit. Signed
 chunks and manifests bind content/metadata; license/provenance claims are authenticated
 to a peer, not certified by the publisher. Protected staging, quotas, source/destination
 throttles and destination-local install locks constrain transfers. Owner consent,

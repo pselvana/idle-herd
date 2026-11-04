@@ -1280,7 +1280,7 @@ struct TransferView: View {
                     notice("Couldn’t load models", detail: catalogError, icon: "exclamationmark.triangle")
                 } else if catalog.isEmpty {
                     notice(retry ? "Original model unavailable" : "No shared models available",
-                           detail: retry ? "Choose another peer or ask the source owner to share the original model revision again." : "The peer has no models authorized for this Mac. Ask its owner to register a model and grant sharing permission.",
+                           detail: retry ? "Choose another peer or ask the source owner to share the original model revision again." : "No compatible shared models were found. Models must be installed in the peer’s Ollama backend and readable by its daemon. Its owner may also have disabled sharing.",
                            icon: "shippingbox")
                 } else {
                     ScrollView {

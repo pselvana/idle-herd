@@ -104,7 +104,11 @@ async def test_owner_permissions_inventory_events_and_peer_isolation(tmp_path):
             transport=httpx.ASGITransport(app=app), base_url="http://localhost"
         ) as client:
             assert (await client.get("/v1/models/inventory")).status_code == 401
-            spec = {"manifest": manifest.model_dump(), "path": str(source)}
+            spec = {
+                "manifest": manifest.model_dump(),
+                "path": str(source),
+                "sharing_enabled": False,
+            }
             assert (
                 await client.post("/v1/models/artifacts", headers=read, json=spec)
             ).status_code == 403

@@ -6,14 +6,42 @@ leaders and Raft have no authority over installation or inference. The implement
 adapter imports **one standalone GGUF into Ollama** through supported blob/create
 APIs. It does not copy Ollama's private model directories or convert formats.
 
-## Permission and operation
+## Default sharing and operation
 
-Enroll peers using [Phase 2](phase-2.md). On the source, prepare a `LocalArtifact`
-JSON containing `manifest`, an absolute local `path`, `allowed_peers` (destination
-worker IDs), `sharing_enabled:true`, and `license_approved:true`. Nothing is shared
-automatically, including private/gated weights and fine-tunes. Explicit source
-permission and destination license acceptance are both required. To create the
-manifest, use `fleet_manager.peer.model_sharing.ArtifactManifest`: supply
+The owner now enables source sharing by default. Daemons discover installed
+standalone Ollama GGUF models through `/api/tags` and `/api/show`, then offer them
+to all authenticated peers without manual registration. New registrations and
+successfully imported copies also default to `allowed_peers:["*"]`,
+`sharing_enabled:true` and `license_approved:true`. This source policy does not
+establish a publisher's license grant; destination permission and license acceptance
+remain explicit for each copy/retry. Existing explicit denials and allowlists are
+preserved. Peer authentication, TLS and signed/replay-protected requests still
+precede every inventory, manifest and chunk operation. See [peer trust](bonjour.md).
+
+`IDLE_HERD_MODEL_AUTO_SHARE=false` disables automatic backend discovery; manually
+registered artifacts retain their per-model permissions. Discovery refreshes within
+30 seconds, shares installed models even when unloaded, and deduplicates identical
+weight digests under one deterministic model name. It opens only absolute
+content-addressed blob paths returned by local Ollama's public metadata API,
+rejects source symlinks, and checks GGUF magic/size. It never walks or copies Ollama's
+private directories. The blob filename supplies the expected content digest;
+the destination verifies the complete downloaded content before import. If Ollama
+is temporarily unavailable, last observed readable file offers can remain; removed
+models withdraw after a successful inventory refresh. Discovery failures are logged.
+
+Automatic offers include content-bound full license text, template, system preset
+and parsed parameters, preserving custom Ollama model behavior through supported
+create APIs. An absent license is explicitly labeled as unknown for owner review.
+Unreadable files, non-GGUF, multimodal/projector and adapter/multi-file models are
+not advertised as standalone copies; those export adapters remain unimplemented.
+The daemon must be able to read the path returned by its backend, including in
+containers. This does not expose arbitrary backend-host files to a container.
+
+Manual registration remains available for standalone GGUFs not installed in Ollama.
+Prepare a `LocalArtifact` JSON with `manifest` and an absolute local `path`.
+Use optional `allowed_peers`, `sharing_enabled` and `license_approved` to override
+the default source permission. To create the manifest, use
+`fleet_manager.peer.model_sharing.ArtifactManifest`: supply
 `model_id`, file SHA-256 `digest` (64 lowercase hex characters), `size_bytes`,
 `format:"gguf"`, `backend:"ollama"`, `quantization`, exact revision `provenance`,
 `license`, and conservative `required_memory_bytes`. Optional `required_os`
@@ -34,9 +62,10 @@ uv run idle-herd models permission FILE_SHA256 permission.json
 
 `permission.json` with `{"sharing_enabled":false}` revokes future source reads,
 including the next chunk of an ongoing transfer. Already delivered bytes cannot be
-recalled. Granting requires `allowed_peers`, `sharing_enabled:true` and
-`license_approved:true`. Imported copies are owned locally and **unshared** until
-their owner grants source permission separately. A registered local artifact is a
+recalled. `{"sharing_enabled":true}` restores the default all-authenticated-peer
+grant; set `allowed_peers` to specific worker IDs to restrict it, or
+`license_approved:false` to withdraw source license permission. Overrides for
+automatically discovered models persist across refresh and restart. A registered local artifact is a
 verified file offer, not proof that the source has loaded it in Ollama.
 
 The menu bar lists inventory and transfers, shows completed/total bytes and failure
@@ -55,8 +84,8 @@ the dialog so the selection can be reviewed before trying again.
 ## Implemented API
 
 All localhost model endpoints use the existing read/control bearer credentials,
-loopback/Host/Origin checks and no-store responses. Source paths are accepted only
-by a control-authorized local registration; paths never cross peer RPC or events.
+loopback/Host/Origin checks and no-store responses. Source paths come from local
+Ollama metadata or control-authorized registration; paths never cross peer RPC or events.
 
 | Endpoint | Scope / body |
 |---|---|
@@ -74,6 +103,10 @@ chunk rechecks the source's per-model destination allowlist. Owner routes are no
 mounted there. Live inventory polling reconciles offers after reconnect; the
 existing discovery descriptor remains a routing hint rather than model authority.
 Inventory is a reachable local view and never promises completeness.
+Signed inventory retains the 128-offer/2-MiB bound, including full model metadata.
+Automatic offers add optional content-bound `ollama` import options; update both
+daemons to receive those offers. Legacy standalone manifests omit this field and
+retain their original canonical hashes and wire shape.
 
 `/v1/node/status` and version 1 SSE snapshots add `transfers` and `model_inventory`.
 `transfer` and `model` events signal sampled changes; reconnect gets a fresh snapshot.
@@ -101,6 +134,7 @@ writes and fsynced file publication precede ready state.
 
 | Setting | Default / purpose |
 |---|---|
+| `IDLE_HERD_MODEL_AUTO_SHARE` | `true`, discover installed readable standalone GGUF models for default sharing |
 | `IDLE_HERD_MAX_MODEL_CACHE_BYTES` | 20 GiB, total managed partial/GGUF content quota |
 | `IDLE_HERD_MODEL_RESERVED_DISK_BYTES` | 1 GiB remaining reserve, in addition to remaining download plus one full import-copy allowance |
 | `IDLE_HERD_MODEL_TRANSFER_BYTES_PER_SECOND` | 10 MiB/s destination transfer throttle |
@@ -134,8 +168,9 @@ See [exact commands/results](implementation-status.md).
 
 Declared OS/CPU/backend-version constraints are checked before download; unsupported
 MLX, CUDA-specific and OCI artifacts are rejected. Full operator/quantization/context
-support is ultimately delegated to Ollama and the admitted load. Model templates,
-adapters and multi-file snapshots are not cloned; choose standalone GGUF artifacts.
+support is ultimately delegated to Ollama and the admitted load. Automatic offers
+preserve templates, system presets and parameters. Adapters and multi-file snapshots
+are not cloned; choose standalone GGUF artifacts.
 Real MLX end-to-end import remains unimplemented, and no MLX acceptance is claimed.
 Provenance/license metadata is content-bound and authenticated to the enrolled
 source, not independently certified by the original publisher.

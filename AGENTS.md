@@ -2,6 +2,16 @@
 
 ## Idle-Herd fork instructions (Phase 10)
 
+The owner now requests default model sharing. Native daemons automatically offer
+installed, readable standalone Ollama GGUF models to authenticated peers; new
+registered/imported artifacts default to `allowed_peers:["*"]`, sharing enabled
+and source permission approved. Explicit per-artifact denials/allowlists persist.
+`IDLE_HERD_MODEL_AUTO_SHARE=false` disables automatic backend discovery. Destination
+permission/license acceptance, signed TLS RPC, final digest checks and admission
+remain required. Multi-file/MLX/multimodal export is not implemented; do not present
+base weights as a complete unsupported model. These rules supersede older manual
+registration/deny-by-default sharing descriptions below and in phase documents.
+
 Native `idle-herd` now defaults to Bonjour/mDNS discovery and automatic LAN trust
 as requested by the owner. See [Bonjour operation/trust](docs/idle-herd/bonjour.md).
 Signed public advertisements establish device-specific durable pins; subsequent

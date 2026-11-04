@@ -112,6 +112,7 @@ class PeerSettings(BaseSettings):
         return value
 
     model_transfer_bytes_per_second: int = Field(default=10 * 1024 * 1024, ge=1, le=1024**3)
+    model_auto_share: bool = True
     max_model_cache_bytes: int = Field(default=20 * 1024**3, ge=1)
     model_reserved_disk_bytes: int = Field(default=1024**3, ge=0)
 

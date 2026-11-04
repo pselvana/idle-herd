@@ -1,5 +1,54 @@
 # Idle-Herd implementation status
 
+## Default model sharing and automatic Ollama offers — November 3, 2026
+
+Following the owner's request, installed readable standalone Ollama GGUFs are
+automatically offered to authenticated peers. New registered/imported artifacts
+default to source sharing enabled, source permission approved and the `*`
+authenticated-peer allowlist. Existing explicit denials and scoped allowlists
+persist; per-chunk checks continue to enforce revocation. Destination permission
+and license acceptance are still required for each transfer/retry. This supersedes
+the earlier manual-registration/deny-by-default descriptions below.
+
+Discovery reads public `/api/tags` and `/api/show` metadata, opens only absolute
+content-addressed GGUF paths returned by the local backend, rejects symlinks and
+checks magic/size. Expected file digests come from Ollama's blob names; the complete
+downloaded digest is verified before destination import. Automatic offers retain
+full license text and content-bound template/system/parameter import options.
+Legacy manifests omit the optional new field and retain their canonical hashes.
+Update both daemons for automatic metadata-bearing offers; older strict peers do
+not understand the new optional import options.
+
+Catalog refresh is cached for 30 seconds, runs in the background for local owner
+status/inventory, and is canceled/awaited on shutdown. Verified peer fetches can
+await the current refresh without canceling a shared refresh on disconnect.
+Successful inventory refresh withdraws removed models; temporarily unavailable
+backend metadata can retain last observed readable file offers. Source failures
+are logged. Explicit automatic-offer overrides are durable. Listings remain bounded
+to 128 offers and the existing 2-MiB signed response budget; identical weight
+digests use one deterministic name. `IDLE_HERD_MODEL_AUTO_SHARE=false` disables
+automatic backend discovery, preserving manual artifact permissions.
+
+The supported copy format remains standalone GGUF/Ollama. MLX/safetensors,
+multimodal/projector, adapter and multi-file export are unimplemented and are not
+advertised as partial base-weight substitutes. Backend paths must be readable in
+the daemon's filesystem namespace. Existing disk/RAM/transfer limits and
+worker-local admitted load confirmation still apply. No admission, trust, ports,
+lease/quarantine, consensus, or upstream API behavior was changed.
+
+Verification: the broader peer/owner/container-boundary regression run passed
+**390 tests, 1 skipped**. After the final nonblocking refresh and response-budget
+changes, the focused owner/model-sharing run passed **72 tests**, including native
+mock-process model sharing and owner restart tests. New cases exercise automatic
+discovery, two signed authenticated peers/replay rejection, full metadata-preserving
+transfer and default resharing, durable restrictions and revocation, removal,
+unsupported/unsafe paths, opt-out, responsive status/shutdown and response bounds.
+**26 Swift package tests passed**; Ruff lint/format and `git diff --check` passed.
+Logs: `/private/tmp/idle-herd-auto-sharing-{broad,final-python,swift,package}.log`.
+Rebuilt the unsigned app at `apps/macos/IdleHerdMenuBar/build/Idle-Herd.app`, including
+the updated empty-catalog guidance. No live daemon/backend restart, real-weight
+transfer, GUI automation, full Python suite or release publication was performed.
+
 ## Peer model browser and copy dialog — November 3, 2026
 
 The macOS copy/retry dialog now matches Preferences with adaptive light/dark cards,
