@@ -5,14 +5,15 @@ import json
 import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
 from fleet_manager.peer.app import create_peer_app, create_peer_rpc_app
 from fleet_manager.peer.identity import PeerIdentity
-from fleet_manager.peer.models import PeerSettings
-from fleet_manager.peer.network import MAX_INFERENCE_BODY
+from fleet_manager.peer.models import AcquireRequest, AdmissionError, PeerSettings
+from fleet_manager.peer.network import MAX_INFERENCE_BODY, OriginDispatch
 from fleet_manager.peer.sensors import IdleSignal
 
 
@@ -81,6 +82,52 @@ async def enrolled(authority, path, worker_id):
 def signed(identity, path, data):
     body = json.dumps(data, separators=(",", ":")).encode()
     return body, identity.sign_request("POST", path, body)
+
+
+async def test_busy_remote_reports_local_battery_refusal_and_recovers(tmp_path, monkeypatch):
+    from fleet_manager.peer.discovery import PeerDescriptor
+
+    async with worker(tmp_path / "worker", monkeypatch) as (app, authority, peer_client):
+        identity = await enrolled(authority, tmp_path / "origin", "origin")
+        peer = PeerDescriptor(
+            worker_id=app.state.ledger.worker_id,
+            cluster_id=app.state.ledger.cluster_id,
+            incarnation=app.state.ledger.incarnation,
+            endpoint="https://127.0.0.1:18443",
+            models=[],
+        )
+        first = await app.state.ledger.acquire(AcquireRequest(model="tiny", request_id="first"))
+        await app.state.ledger.consume(first.token, "tiny:latest")
+        local = SimpleNamespace(
+            state=SimpleNamespace(
+                directory=SimpleNamespace(candidates=lambda model: [peer]),
+                ledger=SimpleNamespace(
+                    worker_id="origin",
+                    mode_state=AsyncMock(return_value=SimpleNamespace(mode="auto")),
+                    acquire=AsyncMock(side_effect=AdmissionError("battery_low", 503)),
+                    require_dispatch=AsyncMock(),
+                ),
+                identity=identity,
+                peer_client=peer_client,
+                trace_store=SimpleNamespace(record_trace=AsyncMock()),
+            )
+        )
+        dispatch = OriginDispatch(AsyncMock(), local)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=dispatch), base_url="http://localhost"
+        ) as origin:
+            response = await origin.post(
+                "/api/generate", json={"model": "tiny", "prompt": "hi", "stream": True}
+            )
+        assert response.status_code == 429
+        assert response.json() == {"error": {"type": "busy", "local_reason": "battery_low"}}
+        assert response.headers["retry-after"] == "1"
+        local.state.trace_store.record_trace.assert_awaited_once()
+        assert (await app.state.ledger.inspect(first.token)).state == "running"
+        await app.state.ledger.finish(first.token, stopped=True)
+        lease = await dispatch._acquire(peer, AcquireRequest(model="tiny", request_id="after"))
+        assert lease.state == "reserved"
+        await app.state.ledger.release(lease.token)
 
 
 async def test_replay_is_durable_across_worker_restart(tmp_path, monkeypatch):

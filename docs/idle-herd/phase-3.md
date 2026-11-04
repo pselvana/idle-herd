@@ -44,6 +44,14 @@ human activity and utilization; `utilization_only` requires utilization but
 not a human-idle signal. For a native headless host with no trustworthy activity
 signal, explicitly set `IDLE_HERD_BACKGROUND_POLICY=utilization_only`.
 
+A local Mac on battery below the configured floor cannot serve a second
+concurrent request even with `interactive_policy=always`. If its peer's only
+slot is occupied, ordinary inference returns 429 immediately. Origin dispatch
+reports the authenticated worker reason (for example `busy`), includes the local
+refusal as `error.local_reason` (for example `battery_low`), and supplies
+`Retry-After: 1`. Connecting AC can restore local eligibility; use Phase 4's
+explicit capacity reservation API for a bounded wait instead of immediate refusal.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `IDLE_HERD_INTERACTIVE_POLICY` | `always` | Interactive admission policy. |

@@ -156,6 +156,11 @@ import IdleHerdCore
                         workerLeasesCurrent: jobsCurrent, originJobsCurrent: originJobsCurrent)
     }
     var presentation: StatusPresentation { StatusPresentation(snapshot) }
+    var localAdmissionUnavailable: Bool { connected && presentation.localAdmissionBlockReason != nil }
+    var localAdmissionStatus: String {
+        guard connected else { return "Waiting for a fresh daemon snapshot" }
+        return presentation.localAdmissionBlockReason ?? presentation.eligibility
+    }
     var availableSlots: String {
         guard let slots = snapshot?.slots else { return "—" }
         return String(max(0, slots.total - slots.occupied))
@@ -191,11 +196,12 @@ import IdleHerdCore
             Label {
                 Text(hideCount || (model.status["hide_job_counts"] as? Bool == true) || !model.connected ? "Idle-Herd" : "Idle-Herd \(model.count)")
             } icon: {
-                Image(nsImage: HerdMenuBarIcon.image(for: model.menuBarActivity))
+                Image(nsImage: HerdMenuBarIcon.image(for: model.menuBarActivity, unavailable: model.localAdmissionUnavailable))
             }
                 .onAppear { model.start() }
                 .accessibilityLabel(model.connected ? ((hideCount || model.status["hide_job_counts"] as? Bool == true) ? "Idle-Herd, connected" : "Idle-Herd, \(model.count) local jobs") : "Idle-Herd, disconnected")
-                .accessibilityValue(model.menuBarActivity.accessibilityDescription)
+                .accessibilityValue("\(model.localAdmissionStatus). \(model.menuBarActivity.accessibilityDescription)")
+                .help(model.localAdmissionStatus)
         }.menuBarExtraStyle(.window)
     }
 }
@@ -304,7 +310,7 @@ struct ContentView: View {
     private var positiveColor: Color {
         colorScheme == .dark ? .mint : Color(red: 0, green: 0.42, blue: 0.32)
     }
-    private var statusColor: Color { model.connected ? positiveColor : .orange }
+    private var statusColor: Color { model.connected ? (model.localAdmissionUnavailable ? .yellow : positiveColor) : .orange }
     private var modeTitle: String {
         model.snapshot?.mode.mode == "auto" ? "Auto" : model.presentation.mode
     }
@@ -341,9 +347,9 @@ struct ContentView: View {
                         .padding(.horizontal, 7).padding(.vertical, 4)
                         .background(statusColor.opacity(0.1), in: Capsule())
                 }
-                Text(model.connected ? model.presentation.eligibility : "Waiting for a fresh daemon snapshot")
+                Text(model.localAdmissionStatus)
                     .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
-                    .help("Incoming peer eligibility. Local inference follows its own policy and backend availability.")
+                    .help("Local availability for new peer work, including policy, backend and slot limits. Local inference follows its own policy.")
                 if let last = model.lastUpdate {
                     Text("\(model.connected ? "Updated" : "Last received") \(last.formatted(date: .omitted, time: .shortened))")
                         .font(.system(size: 10)).foregroundStyle(.secondary)

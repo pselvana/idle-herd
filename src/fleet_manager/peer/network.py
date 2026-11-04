@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import sqlite3
@@ -48,6 +49,15 @@ class Execution(BaseModel):
     ]
     token: str = Field(min_length=1, max_length=256)
     payload: dict
+
+
+class AdmissionDeclineReason(BaseModel):
+    # Forward only a bounded machine-readable reason, never arbitrary peer text.
+    type: str = Field(max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+
+
+class AdmissionDecline(BaseModel):
+    error: AdmissionDeclineReason
 
 
 async def read_body(receive, limit: int) -> bytes:
@@ -358,6 +368,7 @@ class OriginDispatch:
             await downstream_send(message)
 
         send = tracked_send
+        local_reason = None
         try:
             if scope["path"] == "/v1/messages":
                 from fleet_manager.server.routes.anthropic_compat import _check_auth
@@ -418,6 +429,7 @@ class OriginDispatch:
                 lease = await self.local.state.ledger.acquire(spec)
             except AdmissionError as local_error:
                 error = local_error
+                local_reason = local_error.reason
             else:
                 inner_scope = dict(scope)
                 inner_scope["headers"] = list(scope["headers"]) + [
@@ -449,9 +461,14 @@ class OriginDispatch:
             await trace_failure(self.local, str(exc))
             status = exc.status if isinstance(exc, AdmissionError) else 502
             reason = exc.reason if isinstance(exc, AdmissionError) else "peer_unavailable"
-            await JSONResponse(status_code=status, content={"error": {"type": reason}})(
-                scope, receive, send
-            )
+            error = {"type": reason}
+            if local_reason is not None:
+                error["local_reason"] = local_reason
+            await JSONResponse(
+                status_code=status,
+                content={"error": error},
+                headers={"Retry-After": "1"} if status == 429 else {},
+            )(scope, receive, send)
 
     async def _acquire(self, peer, spec):
         await self.local.state.ledger.require_dispatch()
@@ -470,7 +487,10 @@ class OriginDispatch:
             # Only an authenticated decline proves the worker did not grant.
             # An unsigned/lost response leaves the origin pinned to this worker.
             if resp.status_code != 200:
-                raise AdmissionError("remote_admission_declined", resp.status_code)
+                reason = "remote_admission_declined"
+                with contextlib.suppress(ValidationError):
+                    reason = AdmissionDecline.model_validate_json(content).error.type
+                raise AdmissionError(reason, resp.status_code)
             lease = Lease.model_validate_json(content)
             if (
                 lease.worker_id != peer.worker_id

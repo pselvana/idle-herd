@@ -182,6 +182,56 @@ final class StatusPresentationTests: XCTestCase {
         XCTAssertEqual(online.loadedModels, "None loaded")
     }
 
+    func testAdmissionWarningTracksPolicyBlocksWhileExistingWorkDrains() throws {
+        for (reason, text) in [
+            ("battery_low", "Battery below the contribution limit"),
+            ("quiet_hours", "Peer work blocked during quiet hours"),
+            ("thermal_limit", "Waiting for this Mac to cool down"),
+            ("memory_pressure", "Waiting for available memory"),
+        ] {
+            let blocked = StatusPresentation(try snapshot([
+                "idle": ["eligible": false, "reason": reason],
+                "slots": ["running": 1, "occupied": 1, "total": 2],
+                "backend": ["state": "online", "models_loaded": ["tiny"]],
+            ]))
+            XCTAssertEqual(blocked.localAdmissionBlockReason, text)
+        }
+        let ready = StatusPresentation(try snapshot([
+            "idle": ["eligible": true],
+            "slots": ["running": 1, "occupied": 1, "total": 2],
+            "backend": ["state": "online", "models_loaded": ["tiny"]],
+        ]))
+        XCTAssertNil(ready.localAdmissionBlockReason)
+        XCTAssertNil(StatusPresentation(nil).localAdmissionBlockReason)
+    }
+
+    func testAdmissionWarningCoversModesAndUnavailableBackendCapacity() throws {
+        for mode in ["paused", "offline", "draining"] {
+            XCTAssertNotNil(StatusPresentation(try snapshot([
+                "mode": ["mode": mode], "idle": ["eligible": true],
+                "backend": ["state": "online", "models_loaded": []],
+            ])).localAdmissionBlockReason)
+        }
+        for (backend, text) in [("offline", "Ollama is offline"), ("unknown", "Waiting for backend status")] {
+            XCTAssertEqual(StatusPresentation(try snapshot([
+                "idle": ["eligible": true],
+                "backend": ["state": backend, "models_loaded": []],
+            ])).localAdmissionBlockReason, text)
+        }
+        // Occupied includes reserved and quarantined slots, not just execution.
+        for running in [0, 1] {
+            XCTAssertEqual(StatusPresentation(try snapshot([
+                "idle": ["eligible": true],
+                "slots": ["running": running, "occupied": 1, "total": 1],
+                "backend": ["state": "online", "models_loaded": []],
+            ])).localAdmissionBlockReason, "All local slots are occupied")
+        }
+        XCTAssertEqual(StatusPresentation(try snapshot([
+            "idle": ["eligible": true],
+            "backend": ["state": "online", "models_loaded": [], "models_available": []],
+        ])).localAdmissionBlockReason, "No local models installed")
+    }
+
     func testCapacitySeparatesMissingObservationsFromZeroPeers() throws {
         let none = StatusPresentation(try snapshot(["peers": ["known": 0, "reachable": 0, "stale": 0]]))
         XCTAssertEqual(none.remoteSlots, "0")

@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from fleet_manager.peer.identity import IdentityError
+from fleet_manager.peer.models import AcquireRequest, AdmissionError
 from fleet_manager.peer.network import OriginDispatch
 
 
@@ -49,6 +50,38 @@ async def execute(app, send):
         send,
         "request",
     )
+
+
+@pytest.mark.parametrize(
+    "content, reason",
+    [
+        (b'{"error":{"type":"peer_quota"}}', "peer_quota"),
+        (b'{"error":{"type":"owner_active"}}', "owner_active"),
+        (b'{"error":{"type":"private prompt text"}}', "remote_admission_declined"),
+        (b'{"error":{"type":7}}', "remote_admission_declined"),
+        (b'{"error":{}}', "remote_admission_declined"),
+        (b"not json", "remote_admission_declined"),
+    ],
+)
+async def test_remote_decline_reason_is_bounded_and_authenticated(content, reason):
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(429, content=content))
+    ) as client:
+        app = origin(client)
+        app.state.identity.verify_response = Mock()
+        dispatch = OriginDispatch(app, app)
+        peer = SimpleNamespace(endpoint="https://remote.test", worker_id="remote")
+        spec = AcquireRequest(model="tiny", request_id="request")
+        with pytest.raises(AdmissionError) as failed:
+            await dispatch._acquire(peer, spec)
+        assert failed.value.reason == reason
+        assert failed.value.status == 429
+        app.state.identity.verify_response.assert_called_once()
+
+        # No remote reason may bypass response authentication.
+        app.state.identity.verify_response.side_effect = IdentityError("invalid peer")
+        with pytest.raises(IdentityError, match="invalid peer"):
+            await dispatch._acquire(peer, spec)
 
 
 @pytest.mark.asyncio

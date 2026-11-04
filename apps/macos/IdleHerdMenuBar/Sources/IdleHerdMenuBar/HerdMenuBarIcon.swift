@@ -1,12 +1,13 @@
 import AppKit
 import IdleHerdCore
 
-/// Vector template artwork stays sharp at menu bar scale and follows macOS tint.
+/// Eligible nodes follow macOS tint; unavailable nodes use yellow artwork.
 enum HerdMenuBarIcon {
-    private static let images: [NSImage] = (0..<8).map { state in
-        let right = MenuBarActivity.RightLlama(rawValue: state >> 1)!
+    private static let images: [NSImage] = (0..<16).map { state in
+        let unavailable = state & 8 != 0
+        let right = MenuBarActivity.RightLlama(rawValue: (state >> 1) & 3)!
         let image = NSImage(size: NSSize(width: right == .hidden ? 15 : 31, height: 18), flipped: false) { _ in
-            NSColor.black.set()
+            (unavailable ? NSColor.systemYellow : NSColor.black).set()
             drawLlama(at: 0, filled: state & 1 != 0)
             if right != .hidden {
                 let context = NSGraphicsContext.current!.cgContext
@@ -21,13 +22,13 @@ enum HerdMenuBarIcon {
             }
             return true
         }
-        image.isTemplate = true
+        image.isTemplate = !unavailable
         image.accessibilityDescription = right == .hidden ? "One llama" : "Two llamas shoulder to shoulder"
         return image
     }
 
-    static func image(for activity: MenuBarActivity) -> NSImage {
-        images[(activity.localExecuting ? 1 : 0) | (activity.rightLlama.rawValue << 1)]
+    static func image(for activity: MenuBarActivity, unavailable: Bool = false) -> NSImage {
+        images[(activity.localExecuting ? 1 : 0) | (activity.rightLlama.rawValue << 1) | (unavailable ? 8 : 0)]
     }
 
     private static func drawLlama(at offset: CGFloat, filled: Bool) {

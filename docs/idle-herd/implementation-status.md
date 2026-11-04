@@ -1,5 +1,53 @@
 # Idle-Herd implementation status
 
+## Yellow menu bar availability indicator — November 3, 2026
+
+The companion's icon and connection badge now turn yellow when fresh local
+status reports blocked peer admission (including battery, quiet hours and owner
+policy), unavailable backend status, no installed models or exhausted local slots.
+Reservations and quarantined work count toward occupancy. Tooltip, accessibility
+value and panel header explain the block; running work retains its execution
+artwork while draining. Recovery restores the normal menu bar tint. Stale or
+disconnected observations retain neutral artwork and the orange connection badge.
+This indicates observed local availability for peer work; quiet hours/offline/
+draining can still allow local inference and capacity remains advisory.
+
+Verification: **29 Swift package tests passed**, including policy/resource reasons
+while work drains, recovery, participation modes, backend availability and occupied
+slots. Inspected offscreen SwiftUI renders of normal/yellow artwork in light and
+dark appearances, including local/incoming/outgoing execution. Rebuilt the unsigned
+app at `apps/macos/IdleHerdMenuBar/build/Idle-Herd.app`; `git diff --check` passed.
+Logs: `/private/tmp/idle-herd-yellow-{swift,package}.log`; preview:
+`/private/tmp/idle-herd-yellow-icon-preview.png`. Full GUI/VoiceOver interaction
+remains unverified. No daemon, admission policy or backend was changed/restarted.
+Reopen the rebuilt companion to activate the indicator.
+
+## Concurrent request admission diagnostics — November 3, 2026
+
+Investigated a second concurrent `gemma4:26b` request returning HTTP 429
+`remote_admission_declined`. Read-only live capacity showed the local Mac at
+14% battery with a persisted 30% floor (`battery_low`), zero quarantined slots,
+and one eligible one-slot remote worker. Recent traces show remote completions
+interleaved with the declines; earlier requests completed on both machines.
+An occupied remote slot plus the local battery safeguard leaves no second slot.
+`always` retains power safeguards. Connecting AC restores local eligibility
+when other checks pass; ordinary inference does not wait for a slot.
+
+Origin dispatch now preserves a verified peer's bounded machine-readable refusal
+reason, includes `error.local_reason` after failed local admission, and returns
+`Retry-After: 1` for 429 responses. Malformed/unsuitable error bodies retain the
+generic fallback. Signature verification precedes parsing. Worker limits, policy,
+quarantine and execution retry behavior are unchanged.
+
+Verification: **109 mocked tests passed** across RPC, origin activity, waiters,
+policy and fenced transport. The regression combines local `battery_low` with a
+running remote lease, checks `busy`/local reason/Retry-After, confirms the running
+lease stays charged, and verifies admission after confirmed completion. Additional
+cases reject unauthenticated reasons and suppress arbitrary peer text. Ruff lint,
+format checks and `git diff --check` passed. No live inference, setting changes,
+daemon/backend restart, or quarantine reconciliation was performed. Restart the
+origin daemon when drained to activate the diagnostic change.
+
 ## Complete MLX, multimodal and multi-file exports — November 3, 2026
 
 Implemented the owner's requested package-copy extension for both installed

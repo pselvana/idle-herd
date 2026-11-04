@@ -122,6 +122,24 @@ public struct StatusPresentation {
         }
     }
 
+    /// Status is advisory; the worker still checks admission for every request.
+    public var localAdmissionBlockReason: String? {
+        guard let snapshot else { return nil }
+        switch snapshot.mode.mode {
+        case "paused": return "New inference paused"
+        case "offline": return "Peer work disabled while offline"
+        case "draining": return "Finishing existing work"
+        default: break
+        }
+        if !snapshot.idle.eligible { return eligibility }
+        guard let backend = snapshot.backend, backend.state == "online" else {
+            return snapshot.backend?.state == "offline" ? "Ollama is offline" : "Waiting for backend status"
+        }
+        if snapshot.slots.occupied >= snapshot.slots.total { return "All local slots are occupied" }
+        if backend.models_available?.isEmpty == true { return "No local models installed" }
+        return nil
+    }
+
     public var cpu: String { Self.percent(snapshot?.resources?.cpu_percent) }
     public var gpu: String { Self.percent(snapshot?.resources?.gpu_percent) }
     public var memory: String {
