@@ -2,6 +2,33 @@ import XCTest
 @testable import IdleHerdCore
 
 final class StatusPresentationTests: XCTestCase {
+    func testMenuBarLlamasTrackExecutionOriginIndependently() {
+        let local: [String: Any] = ["state": "running", "peer_origin": false]
+        let peer: [String: Any] = ["state": "running", "peer_origin": true]
+        for (leases, left, right) in [([], false, false), ([local], true, false),
+                                     ([peer], false, true), ([local, peer], true, true)] {
+            let activity = MenuBarActivity(workerLeases: leases, current: true)
+            XCTAssertEqual(activity.localExecuting, left)
+            XCTAssertEqual(activity.peerExecuting, right)
+        }
+    }
+
+    func testMenuBarDoesNotLightForUncertainNonrunningOrStaleWork() {
+        let leases: [[String: Any]] = [
+            ["state": "reserved", "peer_origin": false],
+            ["state": "quarantined", "peer_origin": true],
+            ["state": "completed", "peer_origin": false],
+            ["state": "queued", "peer_origin": true],
+            ["state": "running"], // Unknown provenance cannot choose a llama.
+        ]
+        let idle = MenuBarActivity(workerLeases: [], current: true)
+        XCTAssertEqual(MenuBarActivity(workerLeases: leases, current: true), idle)
+        XCTAssertEqual(MenuBarActivity(workerLeases: [
+            ["state": "running", "peer_origin": false],
+            ["state": "running", "peer_origin": true],
+        ], current: false), idle)
+    }
+
     func testJobOriginsUseHostnamesAndHonestOlderDaemonFallbacks() {
         XCTAssertEqual(StatusPresentation.jobOrigin(["peer_origin": true, "origin_host": "pstudio.local"]), "From pstudio.local")
         XCTAssertEqual(StatusPresentation.jobOrigin(["peer_origin": false, "origin_host": "my-mac.local"]), "From my-mac.local")

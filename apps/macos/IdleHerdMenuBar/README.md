@@ -15,6 +15,12 @@ daemon. The app connects only to `127.0.0.1:11435`.
 
 The UI polls status alongside the event stream, and shows disconnected/stale
 when the daemon cannot be reached. The displayed cluster view is an estimate.
+The menu bar uses two llama outlines joined by a bidirectional arrow. The left
+llama fills for local-origin work executing on this Mac; the right fills for
+peer-origin work executing on this Mac. Both can fill together. Only running
+worker leases count: reservations, quarantines and jobs forwarded to another
+machine do not light either llama. Disconnected/stale status or unavailable job
+details clears the fills. Template artwork follows the system menu bar tint.
 CPU/GPU usage and memory use bounded precision and explicit units; power is labeled
 as adapter or battery. Unsupported metrics appear as **Not reported**, with help
 explaining sensor limitations. Missing values never imply zero usage or eligibility.

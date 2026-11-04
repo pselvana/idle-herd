@@ -8,14 +8,16 @@
   A10000000000000000000002 = {isa = PBXBuildFile; fileRef = A20000000000000000000002; };
   A10000000000000000000003 = {isa = PBXBuildFile; fileRef = A20000000000000000000003; };
   A10000000000000000000004 = {isa = PBXBuildFile; productRef = A90000000000000000000001; };
+  A10000000000000000000005 = {isa = PBXBuildFile; fileRef = A20000000000000000000006; };
   A20000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/IdleHerdMenuBar/App.swift; sourceTree = "<group>"; };
   A20000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/IdleHerdMenuBar/UITestProtocol.swift; sourceTree = "<group>"; };
   A20000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/IdleHerdMenuBarUITests.swift; sourceTree = "<group>"; };
   A20000000000000000000004 = {isa = PBXFileReference; explicitFileType = wrapper.application; path = Idle-Herd.app; sourceTree = BUILT_PRODUCTS_DIR; };
   A20000000000000000000005 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = IdleHerdMenuBarUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-  A30000000000000000000001 = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002, A20000000000000000000003, A30000000000000000000002); sourceTree = "<group>"; };
+  A20000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/IdleHerdMenuBar/HerdMenuBarIcon.swift; sourceTree = "<group>"; };
+  A30000000000000000000001 = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002, A20000000000000000000006, A20000000000000000000003, A30000000000000000000002); sourceTree = "<group>"; };
   A30000000000000000000002 = {isa = PBXGroup; name = Products; children = (A20000000000000000000004, A20000000000000000000005); sourceTree = "<group>"; };
-  A40000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002); runOnlyForDeploymentPostprocessing = 0; };
+  A40000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000005); runOnlyForDeploymentPostprocessing = 0; };
   A40000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000004); runOnlyForDeploymentPostprocessing = 0; };
   A40000000000000000000003 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000003); runOnlyForDeploymentPostprocessing = 0; };
   A40000000000000000000004 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };

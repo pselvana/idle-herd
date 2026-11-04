@@ -1,5 +1,26 @@
 # Idle-Herd implementation status
 
+## Menu bar llama activity icon — November 3, 2026
+
+Replaced the grid/disconnection symbol with vector template artwork matching the
+owner’s two-llama/bidirectional-arrow reference. Idle shows two outlines. Running
+local-origin worker leases fill the left llama; running peer-origin leases on this
+Mac fill the right. Both fills operate independently, including while existing
+execution drains in a manual mode. Reserved/quarantined work and origin jobs
+executing elsewhere do not light the icon. Stale/disconnected snapshots and missing
+or failed job-detail reads clear activity; older daemons retain the jobs-endpoint
+fallback. The existing name/count privacy controls remain, and accessibility
+describes execution origin without requiring the artwork to be seen.
+
+Verification: **19 Swift package tests passed**, including four activity states
+and nonrunning/unknown-origin/stale exclusions. Offscreen native rendering of the
+actual icon was inspected at menu bar size and enlarged in light and dark
+appearance. Xcode `build-for-testing` compiled the app and UI test target; UI
+automation was not executed. Packaged the unsigned local development app at
+`apps/macos/IdleHerdMenuBar/build/Idle-Herd.app`. Live inference and physical menu
+bar/VoiceOver interaction remain unverified. No daemon, backend, admission or
+protocol changes were made; no release was published.
+
 ## Preferences window refresh — November 3, 2026
 
 Restyled the native preferences around the owner’s reference, with charcoal/light

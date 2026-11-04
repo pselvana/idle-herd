@@ -7,6 +7,7 @@ import IdleHerdCore
     @Published var status: [String: Any] = [:]
     @Published var snapshot: NodeSnapshot?
     @Published var jobs: [[String: Any]] = []
+    @Published private(set) var jobsCurrent = false
     @Published var originJobs: [[String: Any]] = []
     @Published var inventory: [ModelInventoryItem] = []
     @Published var transfers: [ModelTransfer] = []
@@ -72,9 +73,13 @@ import IdleHerdCore
                 do {
                     let jobSnapshot = try await client.fetch("v1/node/jobs")
                     jobs = (jobSnapshot["worker_leases"] as? [[String: Any]]) ?? []
+                    jobsCurrent = jobSnapshot["worker_leases"] is [[String: Any]]
                     originJobs = (jobSnapshot["jobs"] as? [[String: Any]]) ?? []
                     jobsError = nil
-                } catch { jobsError = "Job details unavailable: \(error.localizedDescription)" }
+                } catch {
+                    jobsCurrent = false
+                    jobsError = "Job details unavailable: \(error.localizedDescription)"
+                }
             }
             do {
                 let inventory = try await client.inventory()
@@ -87,6 +92,7 @@ import IdleHerdCore
     func apply(_ object: [String: Any]) throws {
         let validated = try NodeSnapshot.decode(object)
         snapshot = validated; status = object
+        jobsCurrent = object["worker_leases"] is [[String: Any]]
         if let leases = object["worker_leases"] as? [[String: Any]] { jobs = leases }
         if let history = object["job_history"] as? [[String: Any]] { originJobs = history }
         if object["worker_leases"] != nil && object["job_history"] != nil { jobsError = nil }
@@ -140,6 +146,9 @@ import IdleHerdCore
         return "—"
     }
     var count: String { connected ? snapshot.map { String($0.slots.running) } ?? "—" : "—" }
+    var menuBarActivity: MenuBarActivity {
+        MenuBarActivity(workerLeases: jobs, current: connected && jobsCurrent)
+    }
     var presentation: StatusPresentation { StatusPresentation(snapshot) }
     var availableSlots: String {
         guard let slots = snapshot?.slots else { return "—" }
@@ -173,9 +182,14 @@ import IdleHerdCore
             ContentView(model: model, showPreferences: { preferences.show(model: model) })
                 .onAppear { model.start() }
         } label: {
-            Label(hideCount || (model.status["hide_job_counts"] as? Bool == true) || !model.connected ? "Idle-Herd" : "Idle-Herd \(model.count)", systemImage: model.connected ? "circle.grid.2x2.fill" : "exclamationmark.circle")
+            Label {
+                Text(hideCount || (model.status["hide_job_counts"] as? Bool == true) || !model.connected ? "Idle-Herd" : "Idle-Herd \(model.count)")
+            } icon: {
+                Image(nsImage: HerdMenuBarIcon.image(for: model.menuBarActivity))
+            }
                 .onAppear { model.start() }
                 .accessibilityLabel(model.connected ? ((hideCount || model.status["hide_job_counts"] as? Bool == true) ? "Idle-Herd, connected" : "Idle-Herd, \(model.count) local jobs") : "Idle-Herd, disconnected")
+                .accessibilityValue(model.menuBarActivity.accessibilityDescription)
         }.menuBarExtraStyle(.window)
     }
 }

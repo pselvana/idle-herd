@@ -1,5 +1,26 @@
 import Foundation
 
+/// Only worker-local, confirmed running leases light the menu bar llamas.
+public struct MenuBarActivity: Equatable {
+    public let localExecuting: Bool
+    public let peerExecuting: Bool
+
+    public init(workerLeases: [[String: Any]], current: Bool) {
+        let running = current ? workerLeases.filter { $0["state"] as? String == "running" } : []
+        localExecuting = running.contains { ($0["peer_origin"] as? Bool) == false }
+        peerExecuting = running.contains { ($0["peer_origin"] as? Bool) == true }
+    }
+
+    public var accessibilityDescription: String {
+        switch (localExecuting, peerExecuting) {
+        case (false, false): return "No confirmed execution on this Mac"
+        case (true, false): return "Local work executing on this Mac"
+        case (false, true): return "Peer work executing on this Mac"
+        case (true, true): return "Local and peer work executing on this Mac"
+        }
+    }
+}
+
 /// Presentation keeps unavailable observations distinct from measured zeroes.
 public struct StatusPresentation {
     private let snapshot: NodeSnapshot?
