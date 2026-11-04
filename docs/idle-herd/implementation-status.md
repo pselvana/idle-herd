@@ -1,5 +1,66 @@
 # Idle-Herd implementation status
 
+## Preferences window refresh — November 3, 2026
+
+Restyled the native preferences around the owner’s reference, with charcoal/light
+cards, descriptive switch rows, four section tabs and a pinned action/message
+footer. Preferences opens in its own on-demand native window; launch remains menu
+bar only and closing Preferences does not exit the companion or daemon. General
+contains app behavior, login controls and dashboard notifications; Daemon Policy
+contains background policy, idle delay and quiet hours; Power & Limits contains AC,
+battery and per-peer admission limits; Security & RPC contains the local endpoint,
+credential import and explanatory RPC information. No new peer trust controls or
+unsupported duration/heartbeat settings were introduced.
+
+Quiet hours accept 24-hour `HH:mm` and serialize to the existing minute-of-day API;
+equal start/end retains the daemon’s all-day blocking semantics. The editable draft
+validates finite idle/battery values, peer quotas and times before saving. PATCH
+submits only changed fields at the loaded version, preserving environment defaults
+for untouched preferences. Save failures retain edits. A 409 conflict requires an
+explicit reload; a committed write whose read-back fails is labeled saved but
+requires reload before further edits. Revert restores the loaded draft without an
+API write. App count visibility and login operations retain immediate behavior;
+policy, notification and contribution edits require Save Daemon Policy.
+
+Verification: **17 Swift package tests passed**, including five new cases for
+clock conversion/overnight/all-day windows, malformed times, finite/ranged budgets,
+invalid loaded preferences and changes-only patches. Xcode `build-for-testing`
+compiled the native app and UI test target, including a Preferences navigation,
+invalid-input/save/close scenario. UI automation execution remains unverified on
+this host. Offscreen renders of all four actual SwiftUI tabs in dark and light
+appearance used an in-process fabricated daemon; no live policy, login service,
+Keychain credential, daemon or backend was modified. An unsigned development app
+was packaged locally; no release was published.
+
+## Menu bar visual refresh — November 3, 2026
+
+Updated the native SwiftUI companion using the supplied reference: a connection
+badge and mode menu, active-inference card, blue/indigo local slot-occupancy bar,
+separate host/peer topology cards, segmented participation controls and a compact
+footer. Resources/backend, origin journal, peer models and model sharing remain
+available through disclosure controls. Header, participation and footer stay
+visible while scrolling. Light appearance uses darker status colors for contrast;
+dark appearance uses charcoal surfaces. Cached observations are labeled when
+disconnected. Long model/host names wrap, and quarantine recovery warnings remain
+visible in the inference card. No token rate, model quantization, hardware identity
+or completion percentage is invented from absent measurements.
+
+The new **Pause for 1 hr** action confirms refusal of new inference and sends the
+existing authenticated `paused` mode with a 3600-second duration. It displays the
+daemon's expiry time. Offline retains local inference; Drain and Pause keep their
+existing semantics. The header menu retains timed offline operation. No admission,
+backend, API, credentials, service configuration or port changes were made.
+
+Verification: **12 Swift package tests passed**; Xcode 16.2 `build-for-testing`
+compiled the app and UI test target. Updated UI tests cover the new disclosure/mode
+layout and timed-pause cancellation, confirmation, expiry and return to Auto.
+Those UI interaction tests were compiled, not executed; this host's previously
+recorded macOS automation limitation remains. Offscreen renders of the actual
+SwiftUI view with fabricated snapshots were inspected in light, dark, empty,
+disconnected and long-label quarantine states. This is visual evidence, not live
+LAN/model or VoiceOver acceptance. Packaged an unsigned local development app;
+no daemon/backend restart or release publication was performed.
+
 ## Job host labels and confirmed quarantine recovery — November 3, 2026
 
 Menu bar job rows now identify the originating host, such as **From

@@ -23,9 +23,18 @@ probes display Offline, with a recovery hint. Remote capacity is zero with no
 reachable peers, and remains unavailable until every reachable peer has a fresh
 authenticated observation. It is still an advisory estimate, not admission.
 
+The panel uses a connection header, an active-inference card and a cluster topology
+with separate cards for this Mac and each peer. It adapts to light and dark macOS
+appearances. Running leases show the model, originating host and elapsed lease age;
+the blue bar measures **local slot occupancy**, not inference completion. Token
+speed and completion percentage are not claimed without backend measurements.
+Disconnected views label cached jobs and peer observations as last received/seen.
+
 The header, participation controls and footer stay visible while scrolling. The
-current mode has a checkmark; timed modes show their return time. Origin history
-and device details are expandable, with this Mac identified separately. Diagnostics,
+current mode has a checkmark; timed modes show their return time. **Pause for 1 hr**
+requires confirmation, then returns to Automatic through the daemon's existing mode
+expiry. The header mode menu also offers timed offline mode. Resources/backend,
+origin history, peer models and sharing details are expandable. Diagnostics,
 manual refresh and Quit UI are in **More actions** (the ellipsis menu). Empty model
 inventory means no shareable models were found, not that no models are loaded.
 Phase 7 displays model inventory, transfer
@@ -33,6 +42,18 @@ progress and reasons with authenticated pause/copy/retry. Copy and retry require
 explicit permission and license acceptance; progress updates through snapshots and
 SSE. See [model sharing](../../../docs/idle-herd/phase-7.md). Login launch
 uses macOS Service Management and may require a signed installed app.
+
+Preferences opens on demand in a separate window with **General**, **Daemon
+Policy**, **Power & Limits**, and **Security & RPC** tabs. Grouped cards adapt to
+light/dark appearance, while Close, Revert changes, Save Daemon Policy and status
+messages stay visible below the scrolling content. Quiet hours use 24-hour `HH:mm`
+inputs in this host’s local time; matching start/end times block peer work all day.
+App visibility and login options apply immediately; daemon policy edits require
+Save. Revert restores the last loaded policy without changing daemon defaults.
+Saving validates numeric ranges and submits only changed fields under the loaded
+revision. Failed saves retain edits; a revision conflict requires Reload policy
+before saving again. Credential import remains in Keychain under Security & RPC.
+The dialog does not configure peer trust, job kill deadlines or heartbeat timeouts.
 
 Job rows show **From hostname**, such as `From pstudio.local`, instead of a generic
 peer-origin label. Older peers fall back to endpoint IP or worker identity.
