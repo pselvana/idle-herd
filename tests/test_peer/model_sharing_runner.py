@@ -6,13 +6,16 @@ import sys
 
 import network_runner
 from fastapi import Request
+from fastapi.responses import JSONResponse
 
 original_backend = network_runner.mock_backend
 
 
 def backend(model):
     app = original_backend(model)
-    app.router.routes = [route for route in app.router.routes if route.path != "/api/tags"]
+    app.router.routes = [
+        route for route in app.router.routes if route.path not in {"/api/tags", "/api/embed"}
+    ]
     state = {"models": {f"{model}:latest": {"name": f"{model}:latest", "size": 1000}}, "blobs": {}}
 
     @app.get("/api/tags")
@@ -37,11 +40,29 @@ def backend(model):
         }
         return {"status": "success"}
 
+    @app.post("/api/show")
+    async def show(request: Request):
+        spec = await request.json()
+        name = spec["model"] if ":" in spec["model"] else spec["model"] + ":latest"
+        assert name in state["models"]
+        return {"capabilities": ["embedding" if "-embedding:" in name else "completion"]}
+
+    @app.post("/api/embed")
+    async def embed(request: Request):
+        spec = await request.json()
+        name = spec["model"] if ":" in spec["model"] else spec["model"] + ":latest"
+        assert name in state["models"] and "-embedding:" in name
+        return {"model": spec["model"], "embeddings": [[0.1, 0.2]]}
+
     @app.post("/api/generate")
     async def generate(request: Request):
         spec = await request.json()
         name = spec["model"] if ":" in spec["model"] else spec["model"] + ":latest"
         assert name in state["models"]
+        if "-embedding:" in name:
+            return JSONResponse(
+                status_code=400, content={"error": "model does not support generate"}
+            )
         return {"model": spec["model"], "response": "", "done": True, "done_reason": "stop"}
 
     return app

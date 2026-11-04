@@ -74,6 +74,13 @@ Existing per-model sharing restrictions persist. Disable automatic backend disco
 with `IDLE_HERD_MODEL_AUTO_SHARE=false`. Multimodal, adapter/multi-file and MLX
 exports remain unsupported; they are not shown as copyable base-weight substitutes.
 
+The transfer byte bar is labeled **Downloaded**. A full bar still needs Ollama
+installation and model verification. The daemon now checks embedding-only models
+with embeddings instead of text generation. For an earlier
+`backend_load_unconfirmed` failure, update/restart the destination daemon when safe
+and use **Retry…** with renewed consent. The completed download and matching
+backend import are retained across restart and reused for verification.
+
 Preferences opens on demand in a separate window with **General**, **Daemon
 Policy**, **Power & Limits**, and **Security & RPC** tabs. Grouped cards adapt to
 light/dark appearance, while Close, Revert changes, Save Daemon Policy and status

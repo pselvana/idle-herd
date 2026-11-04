@@ -9,6 +9,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 import httpx
+import pytest
 from test_peer_network import chat, free_port, provision, wait_for
 
 from fleet_manager.peer.model_sharing import CHUNK_SIZE, ArtifactManifest
@@ -43,7 +44,8 @@ def auth(path):
     return {"Authorization": "Bearer " + token}
 
 
-async def test_native_sharing_resumes_after_source_loss(tmp_path):
+@pytest.mark.parametrize("embedding", [False, True])
+async def test_native_sharing_resumes_after_source_loss(tmp_path, embedding):
     paths = [tmp_path / "source", tmp_path / "destination"]
     identities = await provision(paths)
     ports = [free_port(), free_port()]
@@ -52,8 +54,9 @@ async def test_native_sharing_resumes_after_source_loss(tmp_path):
     digest = hashlib.sha256(data).hexdigest()
     model_file = tmp_path / "shared.gguf"
     model_file.write_bytes(data)
+    shared_model = "shared-embedding" if embedding else "shared"
     manifest = ArtifactManifest(
-        model_id="shared",
+        model_id=shared_model,
         digest=digest,
         size_bytes=len(data),
         quantization="Q4",
@@ -150,8 +153,13 @@ async def test_native_sharing_resumes_after_source_loss(tmp_path):
         await restarted.wait()
         assert (await chat(client, dest["url"], "beta")).status_code == 200
         generated = await client.post(
-            dest["url"] + "/api/generate",
-            json={"model": "shared", "prompt": "", "stream": False},
+            dest["url"] + ("/api/embed" if embedding else "/api/generate"),
+            json={"model": shared_model, "input": "survivor check"}
+            if embedding
+            else {"model": shared_model, "prompt": "", "stream": False},
         )
         assert generated.status_code == 200, generated.text
-        assert generated.json()["done"] is True
+        if embedding:
+            assert generated.json()["embeddings"] == [[0.1, 0.2]]
+        else:
+            assert generated.json()["done"] is True

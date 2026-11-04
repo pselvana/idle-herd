@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
@@ -396,6 +397,10 @@ def create_peer_app(
 
             async def confirm_model_load(manifest):
                 # The local runtime owns all execution, including a load probe.
+                metadata = await backend.client.post("/api/show", json={"model": manifest.model_id})
+                metadata.raise_for_status()
+                capabilities = metadata.json().get("capabilities", [])
+                embedding = "embedding" in capabilities and "completion" not in capabilities
                 await refresh_local(app)
                 lease = await ledger.acquire(AcquireRequest(model=manifest.model_id, wait_ms=0))
                 try:
@@ -403,9 +408,14 @@ def create_peer_app(
                         transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:11435"
                     ) as client:
                         response = await client.post(
-                            "/api/generate",
+                            "/api/embed" if embedding else "/api/generate",
                             headers={"x-idle-herd-reservation": lease.token},
                             json={
+                                "model": manifest.model_id,
+                                "input": "Idle-Herd model load check",
+                            }
+                            if embedding
+                            else {
                                 "model": manifest.model_id,
                                 "prompt": "",
                                 "stream": False,
@@ -413,7 +423,28 @@ def create_peer_app(
                             },
                             timeout=120,
                         )
-                    return response.status_code == 200 and response.json().get("done") is True
+                    if response.status_code != 200:
+                        logger.warning(
+                            "Model import load check failed for %s (%s, HTTP %s)",
+                            manifest.model_id,
+                            "embedding" if embedding else "completion",
+                            response.status_code,
+                        )
+                        return False
+                    result = response.json()
+                    if not embedding:
+                        return result.get("done") is True
+                    vectors = result.get("embeddings")
+                    return (
+                        isinstance(vectors, list)
+                        and len(vectors) == 1
+                        and isinstance(vectors[0], list)
+                        and bool(vectors[0])
+                        and all(
+                            type(value) in (int, float) and math.isfinite(value)
+                            for value in vectors[0]
+                        )
+                    )
                 finally:
                     await ledger.abandon_unconsumed(lease.token)
 

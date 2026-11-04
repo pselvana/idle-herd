@@ -4,6 +4,17 @@ Identified via code review of the full codebase. Organized by priority.
 
 **Status key:** `OPEN` — not yet addressed. `PARTIAL` — partially fixed. `FIXED` — resolved.
 
+## Idle-Herd embedding model copy fails after a full download — FIXED (2026-11-03)
+
+`bge-m3` copies could finish downloading and creating the model, then fail with
+`backend_load_unconfirmed`: the import probe always called text generation on an
+embedding-only model. Capability-aware verification now uses admitted `/api/embed`
+and validates the returned vector. Native Ollama embedding models also avoid the
+legacy fastembed interception. Download progress and verification are labeled
+separately in the companion. Update/restart the destination daemon when safe, then
+Retry with renewed consent; intact full partials and recorded backend imports
+survive restart and are reused. See [verification and limits](idle-herd/implementation-status.md).
+
 ---
 
 ## How to read this file

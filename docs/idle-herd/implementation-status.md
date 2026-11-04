@@ -1,5 +1,45 @@
 # Idle-Herd implementation status
 
+## Embedding-model import verification fix — November 3, 2026
+
+The owner reported `bge-m3:latest` failing with `backend_load_unconfirmed` after
+1.16 GB of 1.16 GB downloaded. The destination importer had created/recorded the
+Ollama model but always checked loading with `/api/generate`; an embedding-only
+model rejects that operation. Load confirmation now reads local `/api/show`
+capabilities and uses a small `/api/embed` request for embedding-only models,
+requiring one nonempty finite numeric vector. Completion-capable models retain
+their generation check. Both paths use the local ingress, existing traces and
+worker-local fenced admission; occupied slots and paused mode still reject probes.
+
+Native Idle-Herd now keeps named Ollama text embedding models such as
+`nomic-embed-text` on its admitted Ollama path rather than sending them to the
+legacy router's separate fastembed adapter. Legacy herd fastembed routing remains.
+The menu bar labels byte progress as Downloaded, describes installation/verification
+while importing, and replaces this failure code with an explanation and retry hint.
+Ready still requires verified publication, not merely a full byte count.
+
+After updating/restarting the destination daemon when safe, Retry with renewed
+consent reuses an intact full partial and the matching durable backend import
+record. A regression reproduces the wrong-generation rejection at full size,
+restarts the daemon, retries using embeddings, and reaches ready with exactly one
+chunk download, one blob upload and one backend create across both attempts.
+No model deletion, journal edits, quarantine clearing or automatic retry is needed.
+
+Verification: **173 broader Python cases passed** across owner controls, model
+sharing, native inference routes, discovery and legacy embedding adapters. The
+existing native sharing fixture initially lacked the newly queried capability
+endpoint; it was corrected and expanded to completion/embedding cases. Both
+**native transfer cases passed**, covering TLS, source loss/resume and single-peer
+survivor inference. The strengthened load/restart/retry suite passed **12 cases**;
+its first expanded native run exposed an inherited duplicate mock embedding route,
+which was removed before both native cases passed. **26 Swift package tests passed**.
+Ruff lint/format and `git diff --check` passed. Logs are in
+`/private/tmp/idle-herd-embed-import-{final-python,native,native-final,swift,package}.log`.
+The unsigned companion was rebuilt at
+`apps/macos/IdleHerdMenuBar/build/Idle-Herd.app`. Real `bge-m3` hardware loading, GUI
+automation and the full Python suite remain unverified. No live daemon/backend
+was restarted and the owner's transfer was not retried automatically.
+
 ## Default model sharing and automatic Ollama offers — November 3, 2026
 
 Following the owner's request, installed readable standalone Ollama GGUFs are

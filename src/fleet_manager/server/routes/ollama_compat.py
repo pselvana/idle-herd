@@ -752,7 +752,9 @@ async def dispatch_embed(
         is_text_embedding_model,
     )
 
-    if is_text_embedding_model(model):
+    # Native Idle-Herd owns an Ollama backend and its fenced worker budget;
+    # it does not run the legacy fastembed sidecar, including for imported nomic.
+    if is_text_embedding_model(model) and not hasattr(request.app.state, "ledger"):
         request.state._parsed_body = body
         return await embed_text(request)
 

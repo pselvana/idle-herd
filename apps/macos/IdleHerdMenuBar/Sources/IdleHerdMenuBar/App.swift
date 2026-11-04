@@ -651,9 +651,16 @@ struct ContentView: View {
                     }
                     if transfer.total_bytes > 0 {
                         ProgressView(value: Double(min(transfer.total_bytes, max(0, transfer.completed_bytes))), total: Double(transfer.total_bytes))
-                        Text("\(ByteCountFormatter.string(fromByteCount: transfer.completed_bytes, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: transfer.total_bytes, countStyle: .file))").font(.caption)
+                        Text("Downloaded \(ByteCountFormatter.string(fromByteCount: transfer.completed_bytes, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: transfer.total_bytes, countStyle: .file))").font(.caption)
                     }
-                    if let reason = transfer.reason, !reason.isEmpty { Text(reason).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+                    if transfer.state == "importing" {
+                        Label("Installing and verifying the model in Ollama…", systemImage: "gearshape")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let reason = transfer.reason, !reason.isEmpty {
+                        Text(reason == "backend_load_unconfirmed" ? "Download complete. Ollama could not confirm the model load. Retry to finish verification." : reason)
+                            .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
                 }.font(.callout)
             }
             Button("Copy model from peer…") { showingTransfer = true }.disabled(!model.connected || model.busy)

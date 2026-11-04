@@ -154,6 +154,23 @@ backend digest still matches. A crash between backend create and recording that
 digest conservatively requires owner investigation. A backend may expose an already
 verified imported model before the transfer's load-confirmation/ready step completes.
 The public import contract is described in [Ollama's API documentation](https://github.com/ollama/ollama/blob/main/docs/api.md).
+
+Load confirmation inspects the imported model's live `/api/show` capabilities.
+Embedding-only models such as `bge-m3` use a small
+[`/api/embed`](https://docs.ollama.com/api/embed) request and must return a nonempty
+numeric embedding vector; completion-capable models retain the generation check.
+Both checks run through the destination's local ingress and fenced worker
+admission. Native Idle-Herd keeps Ollama embedding models on that admitted backend,
+including names handled by the legacy router's separate fastembed adapter.
+
+The menu bar's byte bar measures download progress. At full size, installation and
+load verification may still be running. `backend_load_unconfirmed` means the bytes
+were downloaded and the backend import was recorded, but its usable load was not
+confirmed. With the capability-aware fix installed on the destination, use Retry
+and renew consent; an intact full partial and matching recorded backend installation
+are reused across daemon restart. Do not delete the downloaded file or imported
+model to recover from this particular error. Changed backend identities, corrupt
+partials and uncertain execution retain their existing protections.
 Repeated local registration preserves the existing path and permission; conflicting
 manifest metadata for a digest is rejected. Use the permission endpoint for ACL changes.
 Transfer status checks current backend model digests and reports `backend_missing`,

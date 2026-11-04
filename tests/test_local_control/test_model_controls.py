@@ -204,23 +204,38 @@ def test_copy_cli_requires_explicit_consent():
 
 
 @pytest.mark.asyncio
-async def test_model_load_confirmation_obeys_worker_slot_and_pause(tmp_path):
+@pytest.mark.parametrize(
+    "model,capabilities,path",
+    [
+        ("tiny", ["completion"], "/api/generate"),
+        ("dual", ["completion", "embedding"], "/api/generate"),
+        ("bge-m3", ["embedding"], "/api/embed"),
+        ("nomic-embed-text", ["embedding"], "/api/embed"),
+    ],
+)
+async def test_model_load_confirmation_obeys_worker_slot_and_pause(
+    tmp_path, model, capabilities, path
+):
     generated = []
 
     async def backend(request):
         if request.url.path in {"/api/tags", "/api/ps"}:
-            return httpx.Response(200, json={"models": [{"name": "tiny:latest", "size": 1}]})
-        if request.url.path == "/api/generate":
+            return httpx.Response(200, json={"models": [{"name": model + ":latest", "size": 1}]})
+        if request.url.path in {"/api/generate", "/api/embed"}:
             generated.append(request)
-            return httpx.Response(200, json={"model": "tiny", "done": True})
-        return httpx.Response(200, json={"capabilities": ["completion"]})
+            assert request.url.path == path
+            if path == "/api/embed":
+                assert json.loads(request.content)["input"]
+                return httpx.Response(200, json={"model": model, "embeddings": [[0.1, -0.2]]})
+            return httpx.Response(200, json={"model": model, "done": True})
+        return httpx.Response(200, json={"capabilities": capabilities})
 
     app = create_peer_app(
         PeerSettings(data_dir=str(tmp_path), request_memory_gb=0.000001, reserve_memory_gb=0),
         backend_transport=httpx.MockTransport(backend),
     )
     manifest = ArtifactManifest(
-        model_id="tiny",
+        model_id=model,
         digest="a" * 64,
         size_bytes=1,
         quantization="Q4",
@@ -231,7 +246,7 @@ async def test_model_load_confirmation_obeys_worker_slot_and_pause(tmp_path):
     )
     async with app.router.lifespan_context(app):
         ledger = app.state.ledger
-        held = await ledger.acquire(AcquireRequest(model="tiny", wait_ms=0))
+        held = await ledger.acquire(AcquireRequest(model=model, wait_ms=0))
         with pytest.raises(AdmissionError):
             await app.state.model_sharing.load_confirm(manifest)
         assert generated == []
@@ -239,7 +254,143 @@ async def test_model_load_confirmation_obeys_worker_slot_and_pause(tmp_path):
         await ledger.release(held.token)
         assert await app.state.model_sharing.load_confirm(manifest)
         assert len(generated) == 1
+        assert (await ledger.capacity(model + ":latest")).observed_available_slots == 1
         await ledger.set_mode(ModeUpdate(mode="paused"))
         with pytest.raises(AdmissionError):
             await app.state.model_sharing.load_confirm(manifest)
         assert len(generated) == 1
+
+
+@pytest.mark.asyncio
+async def test_embedding_import_retry_reuses_full_download_and_existing_backend_model(tmp_path):
+    import base64
+
+    from fleet_manager.peer.model_sharing import ChunkResponse
+
+    data = b"GGUFembedding model fixture"
+    digest = hashlib.sha256(data).hexdigest()
+    model = "bge-m3:latest"
+    created = False
+    wrong_capabilities = True
+    counts = {"chunks": 0, "create": 0, "blob": 0, "generate": 0, "embed": 0}
+
+    async def backend(request):
+        nonlocal created
+        path = request.url.path
+        if path in {"/api/tags", "/api/ps"}:
+            return httpx.Response(
+                200,
+                json={
+                    "models": [{"name": model, "size": len(data), "digest": "backend-digest"}]
+                    if created
+                    else []
+                },
+            )
+        if path == "/api/show":
+            return httpx.Response(
+                200, json={"capabilities": ["completion" if wrong_capabilities else "embedding"]}
+            )
+        if path.startswith("/api/blobs/"):
+            counts["blob"] += 1
+            assert await request.aread() == data
+            return httpx.Response(201)
+        if path == "/api/create":
+            counts["create"] += 1
+            created = True
+            return httpx.Response(200, json={"status": "success"})
+        if path == "/api/generate":
+            counts["generate"] += 1
+            return httpx.Response(400, json={"error": "model does not support generate"})
+        assert path == "/api/embed"
+        counts["embed"] += 1
+        return httpx.Response(200, json={"model": model, "embeddings": [[0.1, 0.2]]})
+
+    app = create_peer_app(
+        PeerSettings(data_dir=str(tmp_path / "state"), reserve_memory_gb=0, model_auto_share=False),
+        backend_transport=httpx.MockTransport(backend),
+    )
+    artifact = ArtifactManifest(
+        model_id=model,
+        digest=digest,
+        size_bytes=len(data),
+        quantization="Q4",
+        provenance="test",
+        license="MIT",
+        required_memory_bytes=1,
+        manifest_digest="0" * 64,
+    )
+    artifact.manifest_digest = artifact.calculated_digest()
+
+    async def fetch_manifest(_source, _digest):
+        return artifact
+
+    async def fetch_chunk(_source, request):
+        counts["chunks"] += 1
+        chunk = data[request.offset : request.offset + request.length]
+        return ChunkResponse(
+            offset=request.offset,
+            data=base64.b64encode(chunk).decode(),
+            sha256=hashlib.sha256(chunk).hexdigest(),
+        )
+
+    request = TransferRequest(
+        digest=digest,
+        manifest_digest=artifact.manifest_digest,
+        source="source",
+        permit=True,
+        license_approved=True,
+    )
+    async with app.router.lifespan_context(app):
+        sharing = app.state.model_sharing
+        await sharing.start_transfer(request, fetch_manifest, fetch_chunk)
+        await sharing._tasks[digest]
+        failed = (await sharing.status())[0]
+        assert failed.state == "failed" and failed.error == "backend_load_unconfirmed"
+        assert failed.bytes_received == failed.total_bytes == len(data)
+
+    # Installing the fix requires a daemon restart; the full partial and backend
+    # import record must survive it without another download/create.
+    wrong_capabilities = False
+    app = create_peer_app(
+        PeerSettings(data_dir=str(tmp_path / "state"), reserve_memory_gb=0, model_auto_share=False),
+        backend_transport=httpx.MockTransport(backend),
+    )
+    async with app.router.lifespan_context(app):
+        sharing = app.state.model_sharing
+        await sharing.retry(request, fetch_manifest, fetch_chunk)
+        await sharing._tasks[digest]
+        assert (await sharing.status())[0].state == "ready"
+        assert counts == {"chunks": 1, "create": 1, "blob": 1, "generate": 1, "embed": 1}
+        leases = await (await app.state.ledger._db.execute("SELECT state FROM leases")).fetchall()
+        assert [row[0] for row in leases] == ["released", "released"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload", [{"embeddings": []}, {"embeddings": [[]]}, {"embeddings": [[True]]}, {"done": True}]
+)
+async def test_embedding_load_confirmation_rejects_missing_or_invalid_vectors(tmp_path, payload):
+    async def backend(request):
+        if request.url.path in {"/api/tags", "/api/ps"}:
+            return httpx.Response(200, json={"models": [{"name": "bge-m3:latest", "size": 1}]})
+        if request.url.path == "/api/show":
+            return httpx.Response(200, json={"capabilities": ["embedding"]})
+        assert request.url.path == "/api/embed"
+        return httpx.Response(200, json=payload)
+
+    app = create_peer_app(
+        PeerSettings(data_dir=str(tmp_path), model_auto_share=False),
+        backend_transport=httpx.MockTransport(backend),
+    )
+    artifact = ArtifactManifest(
+        model_id="bge-m3",
+        digest="a" * 64,
+        size_bytes=1,
+        quantization="Q4",
+        provenance="test",
+        license="MIT",
+        required_memory_bytes=1,
+        manifest_digest="b" * 64,
+    )
+    async with app.router.lifespan_context(app):
+        assert not await app.state.model_sharing.load_confirm(artifact)
