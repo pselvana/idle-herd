@@ -83,12 +83,14 @@ def validate_layout(manifest: ArtifactManifest):
     elif manifest.format != "gguf-package" or not any(name.endswith(".gguf") for name in base):
         raise AdmissionError("unsupported_artifact_format", 400)
     groups = {}
-    for name in base:
-        match = re.fullmatch(r"(.*)-(\d{5})-of-(\d{5})(\.(?:gguf|safetensors))", name)
+    for item in files:
+        match = re.fullmatch(r"(.*)-(\d{5})-of-(\d{5})(\.(?:gguf|safetensors))", item.name)
         if match:
-            key = (match[1], match[3], match[4])
+            # Draft models and adapters are part of the complete export too.
+            # Shards assigned to another import role cannot complete this group.
+            key = (item.role, match[1], match[3], match[4])
             groups.setdefault(key, set()).add(int(match[2]))
-    for (_, count, _), indices in groups.items():
+    for (_, _, count, _), indices in groups.items():
         if len(indices) != int(count) or min(indices) != 1 or max(indices) != int(count):
             raise AdmissionError("incomplete_model_shards", 400)
 

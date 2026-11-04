@@ -156,3 +156,68 @@ async def test_discovery_resolution_is_bounded(tmp_path, monkeypatch):
     for task in peer.resolving.values():
         task.cancel()
     await asyncio.gather(*list(peer.resolving.values()), return_exceptions=True)
+
+
+@pytest.mark.parametrize("port", [11434, 11435, 11449])
+def test_automatic_listener_closes_reserved_backend_ports(monkeypatch, port):
+    from fleet_manager.peer.bonjour import automatic_listener
+
+    listener = Mock()
+    listener.getsockname.return_value = ("0.0.0.0", port)
+    monkeypatch.setattr("fleet_manager.peer.bonjour.lan_ip", lambda: "192.168.1.10")
+    monkeypatch.setattr("fleet_manager.peer.bonjour.socket.socket", Mock(return_value=listener))
+    with pytest.raises(OSError, match="reserved backend port"):
+        automatic_listener()
+    listener.close.assert_called_once()
+    listener.setblocking.assert_not_called()
+
+
+@pytest.mark.parametrize("preferred", ["127.0.0.1", "169.254.1.2", "8.8.8.8"])
+def test_lan_address_falls_back_to_active_private_interface(monkeypatch, preferred):
+    from fleet_manager.peer.bonjour import lan_ip
+
+    monkeypatch.setattr("fleet_manager.peer.bonjour.get_local_ip", lambda: preferred)
+    monkeypatch.setattr(
+        "fleet_manager.peer.bonjour.psutil.net_if_stats",
+        lambda: {"down": SimpleNamespace(isup=False), "lan": SimpleNamespace(isup=True)},
+    )
+    monkeypatch.setattr(
+        "fleet_manager.peer.bonjour.psutil.net_if_addrs",
+        lambda: {
+            "down": [SimpleNamespace(family=socket.AF_INET, address="192.168.1.8")],
+            "lan": [SimpleNamespace(family=socket.AF_INET, address="192.168.1.9")],
+        },
+    )
+    assert lan_ip() == "192.168.1.9"
+
+
+async def test_offline_transition_during_resolution_never_adds_a_dispatch_candidate(
+    tmp_path, monkeypatch
+):
+    local, remote = await identity(tmp_path / "a"), await identity(tmp_path / "b")
+    local.lan_trust = await LanTrust.open(local)
+    info = service(LanAnnouncement.create(remote, "https://192.168.1.20:17435"))
+    monkeypatch.setattr(
+        "fleet_manager.peer.bonjour.AsyncServiceInfo",
+        Mock(
+            return_value=SimpleNamespace(
+                async_request=AsyncMock(return_value=True),
+                properties=info.properties,
+                port=info.port,
+                parsed_addresses=info.parsed_addresses,
+            )
+        ),
+    )
+    directory = SimpleNamespace(discovered=AsyncMock())
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            identity=local,
+            directory=directory,
+            ledger=SimpleNamespace(cluster_participating=AsyncMock(side_effect=[True, False])),
+        )
+    )
+    peer = BonjourPeers(app, PeerSettings())
+    peer.azc = SimpleNamespace(zeroconf=object())
+    await peer.resolve(SERVICE_TYPE, "remote." + SERVICE_TYPE)
+    directory.discovered.assert_not_awaited()
+    assert peer.endpoints == {}

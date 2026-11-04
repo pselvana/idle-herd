@@ -79,3 +79,52 @@ async def test_self_id_conflict_never_enrolls(tmp_path):
     with pytest.raises(IdentityError, match="local identity"):
         await trust.remember(LanAnnouncement.create(impostor, "https://192.168.1.20:17435"))
     assert not trust.path.exists()
+
+
+async def test_failed_pin_write_grants_no_rpc_or_tls_trust(tmp_path, monkeypatch):
+    a, b = await identity(tmp_path / "a"), await identity(tmp_path / "b")
+    a.lan_trust = await LanTrust.open(a)
+    context = a.client_ssl_context()
+    before = context.cert_store_stats()
+    record = LanAnnouncement.create(b, "https://192.168.1.20:17435")
+
+    def disk_full(*args):
+        raise OSError("disk full")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("fleet_manager.peer.lan_trust._atomic", disk_full)
+        with pytest.raises(OSError, match="disk full"):
+            await a.lan_trust.remember(record)
+    assert not a.lan_trust.path.exists()
+    assert a.lan_trust.cluster_for(b.worker_id) is None
+    assert context.cert_store_stats() == before
+    with pytest.raises(IdentityError):
+        a.verify_request(
+            "POST", "/peer/v1/exchange", b"{}", b.sign_request("POST", "/peer/v1/exchange", b"{}")
+        )
+    await a.lan_trust.remember(record)
+    assert a.verify_peer_certificate(b.cert) == b.worker_id
+
+
+async def test_same_pinned_device_can_move_endpoint_without_rewriting_trust(tmp_path, monkeypatch):
+    a, b = await identity(tmp_path / "a"), await identity(tmp_path / "b")
+    a.lan_trust = await LanTrust.open(a)
+    await a.lan_trust.remember(LanAnnouncement.create(b, "https://192.168.1.20:17435"))
+    before = a.lan_trust.path.read_bytes()
+
+    def unexpected_write(*args):
+        pytest.fail("unchanged device credential must not rewrite durable pins")
+
+    monkeypatch.setattr("fleet_manager.peer.lan_trust._atomic", unexpected_write)
+    await a.lan_trust.remember(LanAnnouncement.create(b, "https://192.168.1.21:17436"))
+    assert a.lan_trust.path.read_bytes() == before
+    assert a.verify_peer_certificate(b.cert) == b.worker_id
+
+
+@pytest.mark.parametrize("content", [b"{}", b"[null]", b"not json"])
+async def test_corrupt_durable_trust_store_fails_closed(tmp_path, content):
+    a = await identity(tmp_path)
+    (a.directory / "lan-peers.json").write_bytes(content)
+    with pytest.raises((IdentityError, ValueError)):
+        await LanTrust.open(a)
+    assert a.lan_trust is None

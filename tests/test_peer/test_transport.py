@@ -260,3 +260,99 @@ async def test_backend_observes_durably_consumed_lease_before_execution(ledger, 
         base_url="http://localhost",
     ) as client:
         assert (await client.post("/api/chat", json={"model": "tiny"})).status_code == 200
+
+
+@pytest.mark.parametrize("done", [1, "true", None, [], {}])
+async def test_only_boolean_terminal_is_completion_proof(ledger, done):
+    import json
+
+    transport = AdmissionTransport(
+        ledger,
+        httpx.MockTransport(
+            lambda request: httpx.Response(200, stream=Wire([json.dumps({"done": done}).encode()]))
+        ),
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        await client.post("/api/chat", json={"model": "tiny"})
+    assert (await ledger.capacity("tiny:latest")).quarantined_slots == 1
+
+
+@pytest.mark.parametrize("path", ["/api/embed", "/api/embeddings"])
+async def test_disconnected_embedding_requires_complete_original_body(ledger, path):
+    release = asyncio.Event()
+    closed = asyncio.Event()
+
+    class Embedding(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            # A done-looking fragment is not completion proof for synchronous embeddings.
+            yield b'{"done":true,"embeddings":['
+            await release.wait()
+            yield b"[1.0]]}"
+
+        async def aclose(self):
+            closed.set()
+
+    transport = AdmissionTransport(
+        ledger, httpx.MockTransport(lambda request: httpx.Response(200, stream=Embedding()))
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        async with client.stream("POST", path, json={"model": "tiny"}) as response:
+            async for _ in response.aiter_bytes():
+                break
+        assert (await ledger.capacity("tiny:latest")).quarantined_slots == 1
+        assert len(transport._streams) == 1
+        release.set()
+        await asyncio.wait_for(closed.wait(), 2)
+        assert (await ledger.capacity("tiny:latest")).observed_available_slots == 1
+        assert not transport._streams
+
+
+async def test_shutdown_cancels_original_pending_read_and_preserves_quarantine(ledger):
+    reading = asyncio.Event()
+    cancelled = asyncio.Event()
+    closed = asyncio.Event()
+
+    class Pending(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"done":false}\n'
+            reading.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        async def aclose(self):
+            closed.set()
+
+    transport = AdmissionTransport(
+        ledger, httpx.MockTransport(lambda request: httpx.Response(200, stream=Pending()))
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        async with client.stream("POST", "/api/chat", json={"model": "tiny"}) as response:
+            async for _ in response.aiter_bytes():
+                break
+        await asyncio.wait_for(reading.wait(), 2)
+        stream = next(iter(transport._streams))
+        assert transport.recovery_deadline(stream.reservation_id) is not None
+    assert cancelled.is_set() and closed.is_set()
+    assert not transport._streams
+    assert transport.recovery_deadline(stream.reservation_id) is None
+    assert (await ledger.capacity("tiny:latest")).quarantined_slots == 1
+    # Repeated cleanup must not change the charge or resurrect a detached reader.
+    await stream.aclose()
+    await stream.shutdown()
+    assert (await ledger.capacity("tiny:latest")).quarantined_slots == 1
+
+
+@pytest.mark.parametrize("status", [500, 503])
+async def test_error_response_cannot_free_slot_even_with_terminal_record(ledger, status):
+    transport = AdmissionTransport(
+        ledger,
+        httpx.MockTransport(
+            lambda request: httpx.Response(status, stream=Wire([b'{"done":true}\n']))
+        ),
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        await client.post("/api/chat", json={"model": "tiny"})
+    view = await ledger.capacity("tiny:latest")
+    assert view.quarantined_slots == 1 and view.observed_available_slots == 0

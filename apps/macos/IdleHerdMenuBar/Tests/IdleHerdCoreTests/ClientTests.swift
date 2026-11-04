@@ -17,6 +17,69 @@ final class MockProtocol: URLProtocol {
 }
 
 final class ClientTests: XCTestCase {
+    func testRejectedCredentialDestinationsNeverReadTheSecret() {
+        for address in ["https://localhost:11435", "http://192.168.1.2:11435",
+                        "http://localhost.example:11435", "http://user:pass@localhost:11435",
+                        "http://127.0.0.1:11435/?next=remote", "http://localhost:11435/#fragment"] {
+            var readSecret = false
+            let unsafe = NodeClient(baseURL: URL(string: address)!, token: {
+                readSecret = true
+                return "secret"
+            })
+            XCTAssertThrowsError(try unsafe.request("v1/node/status"), address)
+            XCTAssertFalse(readSecret, address)
+        }
+    }
+
+    func testCredentialFileBoundsAndCharacterSet() throws {
+        func data(_ token: String, version: Int = 1) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["version": version, "control_token": token])
+        }
+        for count in [32, 256] {
+            let token = String(repeating: "a", count: count - 2) + "_-"
+            XCTAssertEqual(try CredentialStore.validateFileData(data(token)), token)
+        }
+        for token in [String(repeating: "a", count: 31), String(repeating: "a", count: 257),
+                      String(repeating: "a", count: 32) + "\n", String(repeating: "é", count: 32)] {
+            XCTAssertThrowsError(try CredentialStore.validateFileData(data(token)))
+        }
+        XCTAssertThrowsError(try CredentialStore.validateFileData(data(String(repeating: "a", count: 32), version: 2)))
+        XCTAssertThrowsError(try CredentialStore.validateFileData(Data("{}".utf8)))
+    }
+
+    func testRetrySendsCurrentSourceAndOriginalManifestWithExplicitConsent() async throws {
+        let digest = String(repeating: "a", count: 64)
+        let manifest = String(repeating: "b", count: 64)
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/v1/models/transfers/\(digest)/retry")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: self.body(request)) as? [String: Any])
+            XCTAssertEqual(json["digest"] as? String, digest)
+            XCTAssertEqual(json["manifest_digest"] as? String, manifest)
+            XCTAssertEqual(json["source_worker_id"] as? String, "alternate-peer")
+            XCTAssertEqual(json["permission"] as? Bool, true)
+            XCTAssertEqual(json["license_accepted"] as? Bool, true)
+            return (200, Data("{}".utf8))
+        }
+        try await client().startTransfer(digest: digest, manifestDigest: manifest,
+                                         sourceWorkerID: "alternate-peer", licenseAccepted: true, retry: true)
+    }
+
+    func testInvalidEventsCannotReplaceLastValidStatus() throws {
+        for text in ["{}", "{\"data\":[]}", "{\"data\":{\"version\":2}}",
+                     "{\"data\":{\"version\":1,\"mode\":{\"mode\":\"auto\"}}}"] {
+            XCTAssertThrowsError(try NodeClient.eventSnapshot(Data(text.utf8)))
+        }
+        let text = """
+        {"type":"status","future_field":true,"data":{"version":1,"mode":{"mode":"offline"},
+        "slots":{"running":0,"occupied":0,"total":1},"idle":{"eligible":false},"new_field":42}}
+        """
+        let event = try NodeClient.eventSnapshot(Data(text.utf8))
+        XCTAssertEqual(try NodeSnapshot.decode(event).mode.mode, "offline")
+        XCTAssertEqual(event["new_field"] as? Int, 42)
+    }
+
     func testPackageOffersDecodeWithoutLocalPaths() throws {
         let object: [String: Any] = [
             "model_id": "mlx-model:latest", "digest": String(repeating: "a", count: 64),

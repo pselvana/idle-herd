@@ -189,3 +189,109 @@ async def test_cancel_native_stops_tls_listener_before_lifespan_closes(monkeypat
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 2)
     assert closed.is_set()
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("GET", "/v1/jobs/job_123/result"),
+        ("DELETE", "/v1/jobs/job-123"),
+        ("GET", "/v1/capacity/reservations/lease_123"),
+        ("DELETE", "/v1/capacity/reservations/lease-123"),
+    ],
+)
+async def test_gateway_preserves_reservation_capabilities_query_and_public_job_routes(method, path):
+    seen = []
+
+    def upstream(request):
+        seen.append(request)
+        return httpx.Response(200, stream=httpx.ByteStream(b"ok"))
+
+    proxy = Proxy("http://127.0.0.1:11435", gateway=True, transport=httpx.MockTransport(upstream))
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=proxy), base_url="http://gateway"
+        ) as client:
+            response = await client.request(
+                method,
+                path + "?scope=local",
+                headers={"X-Idle-Herd-Reservation": "lease-capability", "X-Forwarded-Host": "evil"},
+            )
+        assert response.status_code == 200 and response.content == b"ok"
+        assert len(seen) == 1
+        assert seen[0].url.path == path and seen[0].url.query == b"scope=local"
+        assert seen[0].headers["x-idle-herd-reservation"] == "lease-capability"
+        assert seen[0].headers["host"] == "127.0.0.1:11435"
+        assert "x-forwarded-host" not in seen[0].headers
+    finally:
+        await proxy.client.aclose()
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", "/v1/jobs/job/cancel"),
+        ("PATCH", "/v1/node/preferences"),
+        ("GET", "/v1/jobs/job/result/extra"),
+        ("GET", "/v1/jobs/job%2Fresult"),
+        ("GET", "/v1/jobs/%6aob/result"),
+        ("GET", "/v1/jobs/" + "a" * 129),
+        ("GET", "/v1/capacity/reservations/lease/extra"),
+        ("POST", "/v1/capacity/reservations/lease"),
+    ],
+)
+async def test_gateway_rejects_noncanonical_dynamic_routes_without_contacting_daemon(method, path):
+    def upstream(request):
+        pytest.fail(f"private or invalid route reached daemon: {request.url}")
+
+    proxy = Proxy("http://127.0.0.1:11435", gateway=True, transport=httpx.MockTransport(upstream))
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=proxy), base_url="http://gateway"
+        ) as client:
+            assert (await client.request(method, path)).status_code == 404
+    finally:
+        await proxy.client.aclose()
+
+
+async def test_proxy_strips_response_connection_headers_and_closes_upstream():
+    closed = asyncio.Event()
+
+    class Body(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"response"
+
+        async def aclose(self):
+            closed.set()
+
+    def upstream(request):
+        assert "x-private-hop" not in request.headers
+        return httpx.Response(
+            200,
+            stream=Body(),
+            headers={
+                "connection": "x-private-hop",
+                "x-private-hop": "private",
+                "x-request-id": "public",
+                "content-type": "application/json",
+            },
+        )
+
+    proxy = Proxy("http://127.0.0.1:11435", gateway=True, transport=httpx.MockTransport(upstream))
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=proxy), base_url="http://gateway"
+        ) as client:
+            response = await client.get(
+                "/health",
+                headers={
+                    "connection": "x-private-hop",
+                    "x-private-hop": "private",
+                },
+            )
+        assert response.content == b"response"
+        assert closed.is_set()
+        assert "connection" not in response.headers and "x-private-hop" not in response.headers
+        assert response.headers["x-request-id"] == "public"
+    finally:
+        await proxy.client.aclose()

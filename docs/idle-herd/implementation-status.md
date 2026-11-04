@@ -1,5 +1,45 @@
 # Idle-Herd implementation status
 
+## Last 29 commits regression audit — November 3, 2026
+
+Reviewed `9dcb72f` through `0571cc5` inclusive and added **78 Python cases and
+7 Swift tests**. See the [commit-to-test audit](regression-audit.md) for scope,
+existing coverage, new failure cases and remaining acceptance gates.
+
+The new tests found that draft-model and adapter split shards were omitted from
+package completeness checks. Both missing-shard cases failed before the fix.
+Layout validation now checks every role separately, rejects groups split across
+roles, and accepts complete auxiliary exports. This changes package validation;
+no admission, trust defaults, port assignments or API schemas changed.
+
+Verification:
+
+- Full Python suite: **2,496 passed, 8 skipped**, in 139.77 seconds. Skips are
+  four opt-in Compose scenarios, one native Go coordination test (Go unavailable)
+  and three ONNX tests (onnxruntime unavailable). Three pre-existing
+  `_dummy_process` unawaited-coroutine warnings remain.
+- Final focused changed Python suites: **144 passed**, including both the
+  missing-shard rejection and complete-package success cases, plus rejection of
+  mixed import roles. This also checks the final assertion edits after the full
+  suite started.
+- Swift package: **38 passed**, covering the freshness/tint matrix, mode-warning
+  precedence, quarantine deadlines, credential destinations/bounds, retry consent
+  and invalid events alongside existing tests.
+- Ruff source lint and source/changed-test format checks, dashboard JavaScript
+  smoke, and `git diff --check` passed.
+- Coverage.py statement/branch coverage of `peer`, `local_control` and
+  `container_runtime` is **86%** during the full Python run; native subprocess
+  execution is not instrumented. The pre-change focused fork run was **436
+  passed, 1 skipped**, with **85%** coverage over the same source scope.
+
+Logs: `/private/tmp/idle-herd-regression-{python,swift,go}.log`; coverage data:
+`/private/tmp/idle-herd-{baseline,regression}.coverage`. The direct Go race command
+could not start because `go` is absent. Loopback mock-process tests required
+execution outside the socket-restricted sandbox; no owner daemon or backend was
+restarted. Real-model/hardware, physical GUI/VoiceOver, service login/sleep/wake
+and cross-platform physical acceptance remain separate gates. Nothing was
+published or deployed.
+
 ## Green running-job indicator — November 3, 2026
 
 The menu bar icon and connection badge now use green for fresh confirmed running

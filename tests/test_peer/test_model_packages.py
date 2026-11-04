@@ -438,6 +438,193 @@ def installed_fixture(tmp_path, format):
     return root, path, show, hashlib.sha256(data).hexdigest()
 
 
+@pytest.mark.parametrize("field", ["name", "role", "size_bytes", "digest", "template"])
+def test_package_identity_binds_file_inventory_and_import_metadata(tmp_path, field):
+    artifact, _ = export_directory(tmp_path, "gguf-package")
+    changed = artifact.manifest.model_copy(deep=True)
+    if field == "template":
+        from fleet_manager.peer.model_sharing import OllamaImportOptions
+
+        changed.ollama = OllamaImportOptions(template="changed template")
+    else:
+        item = changed.files[0]
+        setattr(
+            item,
+            field,
+            {"name": "renamed.gguf", "role": "file", "size_bytes": 999, "digest": "f" * 64}[field],
+        )
+    assert changed.calculated_package_digest() != artifact.manifest.digest
+    with pytest.raises(AdmissionError, match="manifest_digest_mismatch"):
+        ModelSharing._validate(changed)
+    # Re-signing just the outer manifest cannot reuse the original package identity.
+    changed.manifest_digest = changed.calculated_digest()
+    with pytest.raises(AdmissionError, match="package_(digest|size)_mismatch"):
+        ModelSharing._validate(changed)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "overlap", "resized", "symlink"])
+def test_package_sources_cannot_change_after_discovery(tmp_path, mutation):
+    artifact, _ = export_directory(tmp_path, "gguf-package")
+    name = artifact.manifest.files[0].name
+    path = Path(artifact.source_files[name])
+    if mutation == "missing":
+        artifact.source_files.pop(name)
+    elif mutation == "extra":
+        artifact.source_files["extra.gguf"] = str(path)
+    elif mutation == "overlap":
+        artifact.inline_files[name] = base64.b64encode(path.read_bytes()).decode()
+    elif mutation == "resized":
+        path.write_bytes(path.read_bytes() + b"changed")
+    else:
+        target = path.with_suffix(".original")
+        path.rename(target)
+        path.symlink_to(target)
+    with pytest.raises(AdmissionError, match="package_source_mismatch|artifact_changed"):
+        read_range(artifact, 0, artifact.manifest.size_bytes)
+
+
+@pytest.mark.parametrize(
+    "name,data,reason",
+    [
+        ("config.json", b"[]", "invalid_package_metadata"),
+        ("model-00001-of-00002.safetensors", b"x" * 10, "invalid_safetensors"),
+        ("model.safetensors.index.json", b'{"weight_map":{}}', "incomplete_model_shards"),
+        (
+            "model.safetensors.index.json",
+            b'{"weight_map":{"one":"../outside.safetensors"}}',
+            "incomplete_model_shards",
+        ),
+    ],
+)
+def test_correct_file_digest_does_not_authorize_invalid_package_metadata(
+    tmp_path, name, data, reason
+):
+    artifact, _ = export_directory(tmp_path)
+    Path(artifact.source_files[name]).write_bytes(data)
+    artifact = directory_artifact(
+        Path(artifact.path), model_id="test", format="mlx", license="MIT", provenance="test"
+    )
+    with pytest.raises(AdmissionError, match=reason):
+        verify_package(artifact)
+
+
+@pytest.mark.parametrize("mutation", ["manifest", "blob_size", "cloud", "unknown_layer"])
+async def test_managed_export_fails_closed_when_source_manifest_is_not_complete(tmp_path, mutation):
+    root, path, show, digest = installed_fixture(tmp_path, "gguf")
+    if mutation == "manifest":
+        path.write_text(path.read_text() + " ")
+    elif mutation == "blob_size":
+        blob = next((root / "blobs").iterdir())
+        blob.write_bytes(blob.read_bytes() + b"changed")
+    else:
+        manifest = json.loads(path.read_bytes())
+        if mutation == "cloud":
+            data = b'{"remote_host":"https://cloud.example","remote_model":"private"}'
+            config_digest = hashlib.sha256(data).hexdigest()
+            (root / "blobs" / ("sha256-" + config_digest)).write_bytes(data)
+            manifest["config"] = {
+                "digest": "sha256:" + config_digest,
+                "size": len(data),
+                "mediaType": "application/vnd.docker.container.image.v1+json",
+            }
+        else:
+            manifest["layers"][-1]["mediaType"] = "application/vnd.ollama.image.unknown"
+        data = json.dumps(manifest).encode()
+        path.write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()
+
+    def backend(request):
+        return httpx.Response(
+            200,
+            json={"models": [{"name": "test:latest", "digest": digest}]}
+            if request.url.path == "/api/tags"
+            else show,
+        )
+
+    async with httpx.AsyncClient(
+        base_url="http://backend", transport=httpx.MockTransport(backend)
+    ) as client:
+        catalog = OllamaCatalog(client, models_dir=str(root))
+        try:
+            assert await catalog.artifacts() == []
+        finally:
+            await catalog.close()
+
+
+@pytest.mark.parametrize(
+    "version,reason",
+    [
+        ("0.39.99", "backend_version_incompatible"),
+        ("0.40.0-rc1", "backend_version_unknown"),
+        ("not-a-version", "backend_version_unknown"),
+    ],
+)
+async def test_mlx_version_gate_precedes_download_or_import(tmp_path, monkeypatch, version, reason):
+    monkeypatch.setattr("fleet_manager.peer.model_sharing.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("fleet_manager.peer.model_sharing.platform.machine", lambda: "arm64")
+    artifact, _ = export_directory(tmp_path)
+    calls = []
+
+    def backend(request):
+        calls.append(request.url.path)
+        assert request.url.path == "/api/version"
+        return httpx.Response(200, json={"version": version})
+
+    dest = ModelSharing(
+        tmp_path / "dest",
+        "http://backend",
+        transport=httpx.MockTransport(backend),
+        load_confirm=AsyncMock(return_value=True),
+    )
+    await dest.open()
+    chunks = AsyncMock()
+    try:
+        request = TransferRequest(
+            digest=artifact.manifest.digest,
+            manifest_digest=artifact.manifest.manifest_digest,
+            source="source",
+            permit=True,
+            license_approved=True,
+        )
+        await dest.start_transfer(request, AsyncMock(return_value=artifact.manifest), chunks)
+        await dest._tasks[request.digest]
+        status = (await dest.status())[0]
+        assert status.state == "failed" and status.error == reason
+        assert status.bytes_received == 0
+        chunks.assert_not_awaited()
+        assert calls == ["/api/version"]
+        assert await dest.inventory("peer") == []
+    finally:
+        await dest.close()
+
+
+@pytest.mark.parametrize("role,directory", [("draft", "draft"), ("adapter", "adapters")])
+def test_auxiliary_model_shards_must_be_complete_before_becoming_an_offer(
+    tmp_path, role, directory
+):
+    artifact, _ = export_directory(tmp_path, "gguf-package")
+    root = Path(artifact.path)
+    first = root / directory / "model-00001-of-00002.gguf"
+    first.write_bytes(b"GGUFfirst")
+    with pytest.raises(AdmissionError, match="incomplete_model_shards"):
+        directory_artifact(
+            root, model_id="test", format="gguf-package", license="MIT", provenance="test"
+        )
+    (first.parent / "model-00002-of-00002.gguf").write_bytes(b"GGUFsecond")
+    complete = directory_artifact(
+        root, model_id="test", format="gguf-package", license="MIT", provenance="test"
+    )
+    verify_package(complete)
+    assert all(item.role == role for item in complete.manifest.files if "-of-" in item.name)
+    # A peer cannot complete one import role with a shard assigned to another.
+    first_shard = next(item for item in complete.manifest.files if "-00001-of-" in item.name)
+    first_shard.role = "file"
+    complete.manifest.digest = complete.manifest.calculated_package_digest()
+    complete.manifest.manifest_digest = complete.manifest.calculated_digest()
+    with pytest.raises(AdmissionError, match="incomplete_model_shards"):
+        ModelSharing._validate(complete.manifest)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("format", ["safetensors", "gguf"])
 async def test_managed_exports_include_all_layers_and_rewrite_tensor_index(tmp_path, format):

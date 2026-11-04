@@ -4,6 +4,16 @@ Identified via code review of the full codebase. Organized by priority.
 
 **Status key:** `OPEN` — not yet addressed. `PARTIAL` — partially fixed. `FIXED` — resolved.
 
+## Incomplete auxiliary model shards accepted in package exports — FIXED (2026-11-03)
+
+The regression audit of the last 29 commits found that package layout validation
+checked split shards only for base weights. Draft-model and adapter exports could
+be offered with `model-00001-of-00002.gguf` present and the second shard missing.
+Validation now checks all import roles and cannot combine shards across roles.
+Two tests reproduced the defect before the fix and verify that adding the missing
+shard restores a valid complete export. See the
+[regression audit](idle-herd/regression-audit.md) for scope and limitations.
+
 ## Idle-Herd embedding model copy fails after a full download — FIXED (2026-11-03)
 
 `bge-m3` copies could finish downloading and creating the model, then fail with

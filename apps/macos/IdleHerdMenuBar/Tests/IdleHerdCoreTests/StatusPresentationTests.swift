@@ -2,6 +2,67 @@ import XCTest
 @testable import IdleHerdCore
 
 final class StatusPresentationTests: XCTestCase {
+    func testActivityFreshnessMatrixKeepsIndependentObservationsAndTintPriority() {
+        let leases: [[String: Any]] = [["state": "running", "peer_origin": false],
+                                      ["state": "running", "peer_origin": true]]
+        let jobs: [[String: Any]] = [["state": "running", "origin_worker_id": "here", "worker_id": "there"]]
+        for current in [false, true] {
+            for leasesCurrent in [false, true] {
+                for jobsCurrent in [false, true] {
+                    for outbound in [nil, 0, 1] as [Int?] {
+                        for hosts in [0, 1] {
+                            let activity = MenuBarActivity(
+                                workerLeases: leases, originJobs: jobs, localWorkerID: "here",
+                                connectedRemoteHosts: hosts, outboundRunning: outbound, current: current,
+                                workerLeasesCurrent: leasesCurrent, originJobsCurrent: jobsCurrent)
+                            let local = current && leasesCurrent
+                            let remote = current && (outbound.map { $0 > 0 } ?? jobsCurrent)
+                            XCTAssertEqual(activity.localExecuting, local)
+                            XCTAssertEqual(activity.peerExecuting, local)
+                            XCTAssertEqual(activity.remoteExecuting, remote)
+                            let expected: MenuBarActivity.RightLlama = !current || hosts == 0
+                                ? .hidden : local ? .incoming : remote ? .outgoing : .outline
+                            XCTAssertEqual(activity.rightLlama, expected)
+                            XCTAssertEqual(activity.tint(unavailable: true), local || remote ? .green : .yellow)
+                            XCTAssertEqual(activity.tint(unavailable: false), local || remote ? .green : .system)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testOwnerModeReasonTakesPriorityOverBackendAndResourceWarnings() throws {
+        for (mode, reason) in [("paused", "New inference paused"),
+                               ("offline", "Peer work disabled while offline"),
+                               ("draining", "Finishing existing work")] {
+            let view = StatusPresentation(try snapshot([
+                "mode": ["mode": mode], "idle": ["eligible": false, "reason": "battery_low"],
+                "slots": ["running": 0, "occupied": 1, "total": 1],
+                "backend": ["state": "offline", "models_loaded": [], "models_available": []],
+            ]))
+            XCTAssertEqual(view.localAdmissionBlockReason, reason)
+        }
+    }
+
+    func testQuarantineDeadlineMustBeFiniteFutureAndAssociatedWithQuarantine() {
+        let now = Date(timeIntervalSince1970: 100)
+        for deadline in [100.0, 99.0, Double.infinity, Double.nan] {
+            XCTAssertEqual(StatusPresentation.quarantineRecovery([
+                "state": "quarantined", "quarantine_recovery": "awaiting_backend",
+                "quarantine_recovery_deadline": deadline,
+            ], now: now), "Backend outcome unknown · stopped-backend recovery required")
+        }
+        XCTAssertEqual(StatusPresentation.quarantineRecovery([
+            "state": "quarantined", "quarantine_recovery": "awaiting_backend",
+            "quarantine_recovery_deadline": 100.1,
+        ], now: now), "Waiting for backend completion · up to 1s")
+        XCTAssertNil(StatusPresentation.quarantineRecovery([
+            "state": "completed", "quarantine_recovery": "awaiting_backend",
+            "quarantine_recovery_deadline": 200.0,
+        ], now: now))
+    }
+
     func testRunningJobsStayGreenWhenTheyOccupyTheLastSlot() throws {
         let full = StatusPresentation(try snapshot([
             "idle": ["eligible": true],

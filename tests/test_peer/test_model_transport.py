@@ -112,3 +112,86 @@ async def test_failover_requires_matching_manifest_and_valid_chunk():
     assert await fetch_manifest("first", digest) == manifest
     result = await fetch_chunk("first", ChunkRequest(digest=digest, offset=0, length=len(data)))
     assert base64.b64decode(result.data) == data
+
+
+@pytest.mark.parametrize("failure", ["signature", "forbidden", "unavailable"])
+async def test_inventory_negotiation_never_downgrades_an_authentication_or_transport_failure(
+    failure,
+):
+    from unittest.mock import AsyncMock
+
+    import httpx
+
+    from fleet_manager.peer.identity import IdentityError
+    from fleet_manager.peer.model_transport import ModelTransport
+    from fleet_manager.peer.models import AdmissionError
+
+    errors = {
+        "signature": IdentityError("bad signature"),
+        "forbidden": AdmissionError("denied", 403),
+        "unavailable": httpx.ReadError("disconnected"),
+    }
+    transport = ModelTransport(None)
+    transport._rpc = AsyncMock(side_effect=errors[failure])
+    with pytest.raises(type(errors[failure])):
+        await transport._inventory_from(object())
+    transport._rpc.assert_awaited_once()
+
+
+@pytest.mark.parametrize("corruption", ["offset", "length", "hash", "base64", "manifest"])
+async def test_chunk_failover_rejects_invalid_data_and_independently_verifies_next_source(
+    corruption,
+):
+    import base64
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fleet_manager.peer.model_sharing import ChunkRequest, ChunkResponse, TransferRequest
+    from fleet_manager.peer.model_transport import ModelTransport
+
+    data = b"complete model"
+    digest = hashlib.sha256(data).hexdigest()
+    manifest = ArtifactManifest(
+        model_id="test",
+        digest=digest,
+        size_bytes=len(data),
+        quantization="Q4",
+        provenance="test",
+        license="MIT",
+        required_memory_bytes=1,
+        manifest_digest="0" * 64,
+    )
+    manifest.manifest_digest = manifest.calculated_digest()
+    transport = ModelTransport(None)
+    transport.require_online = AsyncMock()
+    transport._peers = lambda: [SimpleNamespace(worker_id=w) for w in ("bad", "good")]
+    calls = []
+
+    async def rpc(peer, path, request, response_type):
+        calls.append((peer.worker_id, path.rsplit("/", 1)[1]))
+        if path.endswith("manifest"):
+            return (
+                manifest.model_copy(update={"license": "changed"})
+                if peer.worker_id == "bad" and corruption == "manifest"
+                else manifest
+            )
+        result = ChunkResponse(offset=0, data=base64.b64encode(data).decode(), sha256=digest)
+        if peer.worker_id == "bad":
+            result = result.model_copy(
+                update={
+                    "offset": {"offset": 1}.get(corruption, 0),
+                    "data": "!!"
+                    if corruption == "base64"
+                    else base64.b64encode(data[:-1] if corruption == "length" else data).decode(),
+                    "sha256": "0" * 64 if corruption == "hash" else digest,
+                }
+            )
+        return result
+
+    transport._rpc = rpc
+    request = TransferRequest(digest=digest, manifest_digest=manifest.manifest_digest, source="bad")
+    _, fetch = transport._fetchers(request)
+    result = await fetch("bad", ChunkRequest(digest=digest, offset=0, length=len(data)))
+    assert base64.b64decode(result.data) == data
+    assert calls[-2:] == [("good", "manifest"), ("good", "chunk")]
+    assert (("bad", "chunk") in calls) == (corruption != "manifest")
