@@ -25,12 +25,18 @@ from 31 to 15 points wide. Stale/disconnected status also shows one outlined lla
 Reservations and quarantines do not light the icon. Template artwork follows the
 system menu bar tint, with half-opacity gray for outgoing work.
 
-The icon and connection badge turn yellow when fresh status reports that this
+The icon and connection badge turn green for confirmed running local, incoming
+peer or outgoing work, including when that work occupies the last available slot.
+Green takes priority while existing jobs drain; it reports current execution,
+not a guarantee of eventual completion. Tooltip and header retain admission
+blocking reasons alongside the running status.
+
+With no confirmed running work, they turn yellow when fresh status reports that this
 Mac cannot accept new peer work: battery/power limits, quiet hours, idle/resource
 policy, participation modes, unavailable backend status, no installed models,
 or all slots occupied (including reserved/quarantined slots). Hover over the icon
 or open the panel for the reason. Existing work keeps its execution fill while
-draining; eligibility recovery restores the normal tint. Disconnected/stale status
+draining; an idle eligible node uses the normal tint. Disconnected/stale status
 keeps the neutral icon and orange connection badge. Quiet hours/offline/draining
 can still allow local inference. This is an advisory availability indicator, not
 a model-specific admission grant.

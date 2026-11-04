@@ -161,6 +161,9 @@ import IdleHerdCore
         guard connected else { return "Waiting for a fresh daemon snapshot" }
         return presentation.localAdmissionBlockReason ?? presentation.eligibility
     }
+    var menuBarStatus: String {
+        menuBarActivity.hasRunningWork ? "Jobs running · \(localAdmissionStatus)" : localAdmissionStatus
+    }
     var availableSlots: String {
         guard let slots = snapshot?.slots else { return "—" }
         return String(max(0, slots.total - slots.occupied))
@@ -200,8 +203,8 @@ import IdleHerdCore
             }
                 .onAppear { model.start() }
                 .accessibilityLabel(model.connected ? ((hideCount || model.status["hide_job_counts"] as? Bool == true) ? "Idle-Herd, connected" : "Idle-Herd, \(model.count) local jobs") : "Idle-Herd, disconnected")
-                .accessibilityValue("\(model.localAdmissionStatus). \(model.menuBarActivity.accessibilityDescription)")
-                .help(model.localAdmissionStatus)
+                .accessibilityValue("\(model.menuBarStatus). \(model.menuBarActivity.accessibilityDescription)")
+                .help(model.menuBarStatus)
         }.menuBarExtraStyle(.window)
     }
 }
@@ -310,7 +313,14 @@ struct ContentView: View {
     private var positiveColor: Color {
         colorScheme == .dark ? .mint : Color(red: 0, green: 0.42, blue: 0.32)
     }
-    private var statusColor: Color { model.connected ? (model.localAdmissionUnavailable ? .yellow : positiveColor) : .orange }
+    private var statusColor: Color {
+        guard model.connected else { return .orange }
+        switch model.menuBarActivity.tint(unavailable: model.localAdmissionUnavailable) {
+        case .green: return .green
+        case .yellow: return .yellow
+        case .system: return positiveColor
+        }
+    }
     private var modeTitle: String {
         model.snapshot?.mode.mode == "auto" ? "Auto" : model.presentation.mode
     }
@@ -347,7 +357,7 @@ struct ContentView: View {
                         .padding(.horizontal, 7).padding(.vertical, 4)
                         .background(statusColor.opacity(0.1), in: Capsule())
                 }
-                Text(model.localAdmissionStatus)
+                Text(model.menuBarStatus)
                     .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
                     .help("Local availability for new peer work, including policy, backend and slot limits. Local inference follows its own policy.")
                 if let last = model.lastUpdate {

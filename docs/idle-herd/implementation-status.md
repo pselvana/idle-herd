@@ -1,5 +1,24 @@
 # Idle-Herd implementation status
 
+## Green running-job indicator — November 3, 2026
+
+The menu bar icon and connection badge now use green for fresh confirmed running
+local, incoming-peer or outgoing work. Running takes priority over yellow when
+jobs occupy all slots or finish during an admission block. With no running work,
+blocked availability remains yellow and an eligible idle node uses the normal
+system icon tint. Tooltip/header show running status alongside any admission
+reason. Reserved, quarantined, completed, failed and stale work do not show green;
+green observes execution and does not promise eventual successful completion.
+
+Verification: **31 Swift package tests passed**, including last-slot execution,
+local/peer/outgoing priority and nonrunning/stale fallback. Inspected offscreen
+light/dark renders of green, yellow and neutral states. Rebuilt the unsigned app
+at `apps/macos/IdleHerdMenuBar/build/Idle-Herd.app`; `git diff --check` passed.
+Logs: `/private/tmp/idle-herd-green-{swift,package}.log`; preview:
+`/private/tmp/idle-herd-green-icon-preview.png`. Reopen the rebuilt companion to
+activate. No daemon/backend restart or admission change was performed; live GUI
+and VoiceOver interaction remain unverified.
+
 ## Yellow menu bar availability indicator — November 3, 2026
 
 The companion's icon and connection badge now turn yellow when fresh local

@@ -2,6 +2,40 @@ import XCTest
 @testable import IdleHerdCore
 
 final class StatusPresentationTests: XCTestCase {
+    func testRunningJobsStayGreenWhenTheyOccupyTheLastSlot() throws {
+        let full = StatusPresentation(try snapshot([
+            "idle": ["eligible": true],
+            "backend": ["state": "online", "models_loaded": ["tiny"]],
+            "slots": ["running": 1, "occupied": 1, "total": 1],
+        ]))
+        XCTAssertEqual(full.localAdmissionBlockReason, "All local slots are occupied")
+        for peerOrigin in [false, true] {
+            let activity = MenuBarActivity(
+                workerLeases: [["state": "running", "peer_origin": peerOrigin]],
+                connectedRemoteHosts: 1, current: true)
+            XCTAssertEqual(activity.tint(unavailable: full.localAdmissionBlockReason != nil), .green)
+        }
+        let outgoing = MenuBarActivity(workerLeases: [], connectedRemoteHosts: 1,
+                                       outboundRunning: 1, current: true)
+        XCTAssertEqual(outgoing.tint(unavailable: true), .green)
+        XCTAssertEqual(outgoing.tint(unavailable: false), .green)
+    }
+
+    func testIdleBlockedUncertainAndStaleJobsDoNotShowGreen() {
+        let idle = MenuBarActivity(workerLeases: [], current: true)
+        XCTAssertEqual(idle.tint(unavailable: false), .system)
+        XCTAssertEqual(idle.tint(unavailable: true), .yellow)
+        for state in ["reserved", "quarantined", "completed", "failed", "queued"] {
+            let activity = MenuBarActivity(
+                workerLeases: [["state": state, "peer_origin": false]], current: true)
+            XCTAssertEqual(activity.tint(unavailable: true), .yellow)
+        }
+        let stale = MenuBarActivity(
+            workerLeases: [["state": "running", "peer_origin": false]],
+            connectedRemoteHosts: 1, outboundRunning: 1, current: false)
+        XCTAssertEqual(stale.tint(unavailable: false), .system)
+    }
+
     func testMenuBarLlamasTrackExecutionOriginIndependently() {
         let local: [String: Any] = ["state": "running", "peer_origin": false]
         let peer: [String: Any] = ["state": "running", "peer_origin": true]

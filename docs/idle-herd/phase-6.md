@@ -42,11 +42,15 @@ The new `outbound_running` observation covers ordinary forwarded requests as wel
 as durable jobs; older daemons fall back to journaled remote jobs only. Stale
 status clears fills and hides the right llama. These are presentation observations,
 not admission or remote-completion authority.
-Fresh status indicating blocked peer admission, unavailable backend status,
+Confirmed running local/incoming/outgoing jobs turn the icon and connection badge
+green, taking priority over yellow while jobs occupy slots or drain. Tooltip/header
+retain the admission reason alongside running status. Green observes execution,
+not a promise of eventual successful completion. With no confirmed running work,
+fresh status indicating blocked peer admission, unavailable backend status,
 empty installed inventory or exhausted slots turns the icon and connection badge
 yellow. The tooltip and header state the reason, including low battery and quiet
 hours. Existing execution fills remain visible until completion; normal tint
-returns after eligibility/capacity recovers. Disconnection retains neutral artwork
+returns when idle and eligible. Disconnection retains neutral artwork
 and an orange badge rather than presenting a cached policy decision as current.
 Resource observations include provenance/age and unknown values. Unoccupied
 slots are a budget observation, not proof of model fit. Cluster reachability

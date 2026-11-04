@@ -1,13 +1,17 @@
 import AppKit
 import IdleHerdCore
 
-/// Eligible nodes follow macOS tint; unavailable nodes use yellow artwork.
+/// Running work is green; otherwise unavailable nodes are yellow and ready nodes follow macOS tint.
 enum HerdMenuBarIcon {
-    private static let images: [NSImage] = (0..<16).map { state in
-        let unavailable = state & 8 != 0
+    private static let images: [NSImage] = (0..<(8 * MenuBarActivity.Tint.allCases.count)).map { state in
+        let tint = MenuBarActivity.Tint(rawValue: state >> 3)!
         let right = MenuBarActivity.RightLlama(rawValue: (state >> 1) & 3)!
         let image = NSImage(size: NSSize(width: right == .hidden ? 15 : 31, height: 18), flipped: false) { _ in
-            (unavailable ? NSColor.systemYellow : NSColor.black).set()
+            switch tint {
+            case .system: NSColor.black.set()
+            case .yellow: NSColor.systemYellow.set()
+            case .green: NSColor.systemGreen.set()
+            }
             drawLlama(at: 0, filled: state & 1 != 0)
             if right != .hidden {
                 let context = NSGraphicsContext.current!.cgContext
@@ -22,13 +26,13 @@ enum HerdMenuBarIcon {
             }
             return true
         }
-        image.isTemplate = !unavailable
+        image.isTemplate = tint == .system
         image.accessibilityDescription = right == .hidden ? "One llama" : "Two llamas shoulder to shoulder"
         return image
     }
 
     static func image(for activity: MenuBarActivity, unavailable: Bool = false) -> NSImage {
-        images[(activity.localExecuting ? 1 : 0) | (activity.rightLlama.rawValue << 1) | (unavailable ? 8 : 0)]
+        images[(activity.localExecuting ? 1 : 0) | (activity.rightLlama.rawValue << 1) | (activity.tint(unavailable: unavailable).rawValue << 3)]
     }
 
     private static func drawLlama(at offset: CGFloat, filled: Bool) {

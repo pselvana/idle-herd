@@ -2,6 +2,10 @@ import Foundation
 
 /// Execution location and fresh peer reachability drive the menu bar artwork.
 public struct MenuBarActivity: Equatable {
+    public enum Tint: Int, CaseIterable {
+        case system, yellow, green
+    }
+
     public enum RightLlama: Int, CaseIterable {
         case hidden, outline, incoming, outgoing
     }
@@ -38,6 +42,13 @@ public struct MenuBarActivity: Equatable {
         guard hasConnectedPeers else { return .hidden }
         if peerExecuting { return .incoming }
         return remoteExecuting ? .outgoing : .outline
+    }
+
+    public var hasRunningWork: Bool { localExecuting || peerExecuting || remoteExecuting }
+
+    public func tint(unavailable: Bool) -> Tint {
+        if hasRunningWork { return .green }
+        return unavailable ? .yellow : .system
     }
 
     public var accessibilityDescription: String {
